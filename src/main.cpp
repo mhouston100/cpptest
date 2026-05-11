@@ -6,13 +6,32 @@
 
 namespace {
 
-// World meters (or abstract units) per grid tile — tweak with [ / ].
+// --- World / sprite layer: fixed internal resolution (author sprites for this canvas).
+// All gameplay + billboards + 3D scene draw here; upscale is integer + nearest = crisp pixels.
+constexpr int kWorldBufferW = 640;
+constexpr int kWorldBufferH = 360;
+
+// --- UI layer: independent coordinate system in **window pixels** (not world-buffer pixels).
+// Scale HUD from a reference window so text stays readable on large displays.
+constexpr float kUiRefScreenW = 960.f;
+constexpr float kUiRefScreenH = 540.f;
+
+float UiScale() {
+  const float sx = static_cast<float>(GetScreenWidth()) / kUiRefScreenW;
+  const float sy = static_cast<float>(GetScreenHeight()) / kUiRefScreenH;
+  return std::clamp(std::min(sx, sy), 0.5f, 3.f);
+}
+
+int UiPx(float logicalPixels) {
+  return static_cast<int>(std::lround(logicalPixels * UiScale()));
+}
+
+// World meters per grid tile — tweak with [ / ].
 float g_tileWorld = 1.f;
 
-// Perspective camera orbit (Diablo-like: oblique view, not straight down).
 float g_camDist = 14.f;
-float g_camPitchDeg = 50.f;  // 0 = horizon, 90 = top-down; ~48–58 reads “ARPG”
-float g_camYawDeg = 42.f;    // orbit around Y (world corner)
+float g_camPitchDeg = 50.f;
+float g_camYawDeg = 42.f;
 
 Vector3 TileToWorldCenter(float tx, float tz) {
   return {tx * g_tileWorld, 0.f, tz * g_tileWorld};
@@ -29,7 +48,6 @@ void UpdateDiabloStyleCamera(Camera3D& cam, Vector3 focus) {
   const float sp = std::sin(pitch);
   const float cy = std::cos(yaw);
   const float sy = std::sin(yaw);
-  // Offset: elevated and “around the corner” so the floor reads at an angle.
   const Vector3 offset{g_camDist * cp * sy, g_camDist * sp, g_camDist * cp * cy};
   cam.position = Vector3Add(focus, offset);
   cam.target = focus;
@@ -39,7 +57,7 @@ void UpdateDiabloStyleCamera(Camera3D& cam, Vector3 focus) {
 void DrawWorldGrid(int halfTiles, Color lineColor) {
   const float t = g_tileWorld;
   const float L = static_cast<float>(halfTiles) * t;
-  const float y = 0.001f;  // slight lift avoids z-fighting with the plane
+  const float y = 0.001f;
   for (int i = -halfTiles; i <= halfTiles; ++i) {
     const float o = static_cast<float>(i) * t;
     DrawLine3D({-L, y, o}, {L, y, o}, lineColor);
@@ -55,6 +73,28 @@ void DrawPlayerBlock(Vector3 baseCenter, Color fill, Color outline) {
   DrawCubeWires(c, s * 2.f, h, s * 2.f, outline);
 }
 
+// Integer scale of world buffer into the window; letterboxes the rest.
+Rectangle WorldDestRect(int bufW, int bufH) {
+  const int sw = GetScreenWidth();
+  const int sh = GetScreenHeight();
+  int scale = std::min(sw / bufW, sh / bufH);
+  if (scale < 1) {
+    scale = 1;
+  }
+  const int dw = bufW * scale;
+  const int dh = bufH * scale;
+  const int ox = (sw - dw) / 2;
+  const int oy = (sh - dh) / 2;
+  return {static_cast<float>(ox), static_cast<float>(oy), static_cast<float>(dw), static_cast<float>(dh)};
+}
+
+void DrawWorldBufferToScreen(const RenderTexture2D& worldRt, int bufW, int bufH) {
+  const Rectangle dest = WorldDestRect(bufW, bufH);
+  const Rectangle src{0.f, 0.f, static_cast<float>(worldRt.texture.width),
+                      -static_cast<float>(worldRt.texture.height)};
+  DrawTexturePro(worldRt.texture, src, dest, {0.f, 0.f}, 0.f, WHITE);
+}
+
 }  // namespace
 
 int main() {
@@ -65,7 +105,10 @@ int main() {
   InitWindow(kWindowW, kWindowH, "cpptest — Diablo-style view");
   SetTargetFPS(60);
 
-  Vector2 player{4.5f, 4.5f};  // x = world X tile coord, y = world Z tile coord
+  RenderTexture2D worldTarget = LoadRenderTexture(kWorldBufferW, kWorldBufferH);
+  SetTextureFilter(worldTarget.texture, TEXTURE_FILTER_POINT);
+
+  Vector2 player{4.5f, 4.5f};
   constexpr float kMoveSpeed = 5.f;
   constexpr float kSnapStrength = 18.f;
 
@@ -126,10 +169,11 @@ int main() {
     }
 
     Vector3 focus = TileToWorldCenter(player.x, player.y);
-    focus.y += g_tileWorld * 0.35f;  // look slightly above the feet
+    focus.y += g_tileWorld * 0.35f;
     UpdateDiabloStyleCamera(camera, focus);
 
-    BeginDrawing();
+    // ----- Layer 1: world (pixel-consistent internal resolution) -----
+    BeginTextureMode(worldTarget);
     ClearBackground(Color{12, 14, 20, 255});
 
     BeginMode3D(camera);
@@ -143,18 +187,32 @@ int main() {
     DrawPlayerBlock(feet, Color{210, 115, 70, 255}, Color{35, 18, 10, 255});
 
     EndMode3D();
+    EndTextureMode();
 
-    DrawText("WASD: grid on ground (X/Z) — same snap as before", 12, 12, 18, RAYWHITE);
-    DrawText("[ / ] tile world size   - / + camera distance   ; / ' pitch   , / . yaw", 12, 34, 18,
+    // ----- Compositing + Layer 2: UI (full window, independent layout) -----
+    BeginDrawing();
+    ClearBackground(Color{8, 9, 12, 255});
+
+    DrawWorldBufferToScreen(worldTarget, kWorldBufferW, kWorldBufferH);
+
+    const int m = UiPx(12.f);
+    const int fs = UiPx(18.f);
+    const int lh = UiPx(22.f);
+    DrawText("WASD: move   [ / ] tile size   - / + dist   ; / ' pitch   , / . yaw", m, m, fs, RAYWHITE);
+    DrawText("World buffer: pixel-consistent (nearest integer scale)", m, m + lh, fs,
              Color{200, 200, 200, 255});
+    DrawText(TextFormat("Internal %dx%d  window %dx%d  uiScale %.2f", kWorldBufferW, kWorldBufferH,
+                        GetScreenWidth(), GetScreenHeight(), static_cast<double>(UiScale())),
+             m, m + lh * 2, fs, Color{170, 210, 170, 255});
     DrawText(TextFormat("tileWorld=%.2f  dist=%.1f  pitch=%.0f°  yaw=%.0f°",
                         static_cast<double>(g_tileWorld), static_cast<double>(g_camDist),
                         static_cast<double>(g_camPitchDeg), static_cast<double>(g_camYawDeg)),
-             12, 56, 18, Color{170, 210, 170, 255});
+             m, m + lh * 3, fs, Color{160, 200, 230, 255});
 
     EndDrawing();
   }
 
+  UnloadRenderTexture(worldTarget);
   CloseWindow();
   return 0;
 }
