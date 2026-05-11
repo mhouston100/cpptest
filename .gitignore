@@ -1,0 +1,10 @@
+/build/
+/cmake-build-*/
+/out/
+/.cache/
+compile_commands.json
+*.o
+*.a
+*.so
+*.dylib
+CMakeUserPresets.json
