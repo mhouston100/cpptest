@@ -39,8 +39,31 @@ Vector3 TileToWorldCenter(float tx, float tz) {
   return {tx * g_tileWorld, 0.f, tz * g_tileWorld};
 }
 
+// Horizontal half-extent of the player cube in **tile units** (must match DrawPlayerBlock).
+constexpr float kPlayerFootprintHalfTiles = 0.35f;
+// Extra inset from the outer grid line so the model stays visibly inside (tile units → world × tileWorld).
+constexpr float kGridInnerMarginTiles = 0.5f;
+
 Vector2 NearestTileCenter(Vector2 p) {
   return {std::round(p.x - 0.5f) + 0.5f, std::round(p.y - 0.5f) + 0.5f};
+}
+
+// Clamp feet (tile coords → world XZ) so the player cube stays inside the grid: outer faces at most
+// (L - margin) from centerline, with margin = kGridInnerMarginTiles * tileWorld past the grid line.
+void ClampPlayerToGrid(Vector2& p, int halfTiles, float tileWorld) {
+  if (tileWorld <= 1e-6f) {
+    return;
+  }
+  const float L = static_cast<float>(halfTiles) * tileWorld;
+  const float halfW = kPlayerFootprintHalfTiles * tileWorld;
+  const float marginW = kGridInnerMarginTiles * tileWorld;
+  const float Lc = std::max(L - marginW - halfW, 1e-4f);
+  float wx = p.x * tileWorld;
+  float wz = p.y * tileWorld;
+  wx = std::clamp(wx, -Lc, Lc);
+  wz = std::clamp(wz, -Lc, Lc);
+  p.x = wx / tileWorld;
+  p.y = wz / tileWorld;
 }
 
 void UpdateDiabloStyleCamera(Camera3D& cam, Vector3 focus) {
@@ -68,7 +91,7 @@ void DrawWorldGrid(int halfTiles, Color lineColor) {
 }
 
 void DrawPlayerBlock(Vector3 baseCenter, Color fill, Color outline) {
-  const float s = g_tileWorld * 0.35f;
+  const float s = g_tileWorld * kPlayerFootprintHalfTiles;
   const float h = g_tileWorld * 0.85f;
   const Vector3 c{baseCenter.x, baseCenter.y + h * 0.5f, baseCenter.z};
   DrawCube(c, s * 2.f, h, s * 2.f, fill);
@@ -83,21 +106,85 @@ void DrawWorldBufferToScreen(const RenderTexture2D& worldRt) {
   DrawTexturePro(worldRt.texture, src, dest, {0.f, 0.f}, 0.f, WHITE);
 }
 
-// Darken the view as the player approaches the same bounds as DrawWorldGrid (±L in world X/Z).
-void DrawMapEdgeFadeOverlay(const Vector2& playerTile, int gridHalf, float tileWorld, int bufW, int bufH) {
+// Ground shader: world-space blend to black outside the same square as the grid (max(|x|,|z|) <= L).
+// Independent of camera/player — suitable for later replacing the square with building walls / interior.
+constexpr const char* kGroundVs = R"(
+#version 330
+in vec3 vertexPosition;
+uniform mat4 matProjection;
+uniform mat4 matView;
+uniform mat4 matModel;
+out vec3 fragWorldPos;
+
+void main() {
+  fragWorldPos = vec3(matModel * vec4(vertexPosition, 1.0));
+  gl_Position = matProjection * matView * matModel * vec4(vertexPosition, 1.0);
+}
+)";
+
+constexpr const char* kGroundFs = R"(
+#version 330
+in vec3 fragWorldPos;
+uniform vec4 mapEdge;
+out vec4 finalColor;
+
+void main() {
+  float L = mapEdge.x;
+  float fade = mapEdge.y;
+  float d = max(abs(fragWorldPos.x), abs(fragWorldPos.z));
+  float t = smoothstep(L, L + fade, d);
+  vec3 base = vec3(0.12549019607843137, 0.14901960784313725, 0.18823529411764706);
+  finalColor = vec4(mix(base, vec3(0.0), t), 1.0);
+}
+)";
+
+struct GroundDrawResources {
+  Model model{};
+  Shader shader{};
+  int locMapEdge = -1;
+  bool ok = false;
+};
+
+GroundDrawResources LoadGroundDrawResources() {
+  GroundDrawResources r{};
+  r.shader = LoadShaderFromMemory(kGroundVs, kGroundFs);
+  if (!IsShaderValid(r.shader)) {
+    return r;
+  }
+  r.locMapEdge = GetShaderLocation(r.shader, "mapEdge");
+  if (r.locMapEdge < 0) {
+    UnloadShader(r.shader);
+    r.shader = {};
+    return r;
+  }
+  Mesh mesh = GenMeshPlane(1.f, 1.f, 1, 1);
+  r.model = LoadModelFromMesh(mesh);
+  r.model.materials[0].shader = r.shader;
+  r.ok = true;
+  return r;
+}
+
+void UnloadGroundDrawResources(GroundDrawResources& r) {
+  if (r.ok) {
+    UnloadModel(r.model);
+    UnloadShader(r.shader);
+    r.ok = false;
+  }
+}
+
+void DrawGroundWithMapEdge(const GroundDrawResources& res, int gridHalf, float tileWorld) {
+  const float planeSize = static_cast<float>(gridHalf * 2 + 2) * tileWorld * 2.f;
   const float L = static_cast<float>(gridHalf) * tileWorld;
-  const float wx = playerTile.x * tileWorld;
-  const float wz = playerTile.y * tileWorld;
-  const float edgeDist = std::min(L - std::fabs(wx), L - std::fabs(wz));
-  constexpr float kFadeSpanTiles = 3.25f;
-  const float fadeSpan = std::max(0.05f, kFadeSpanTiles * tileWorld);
-  float v = 1.f - std::clamp(edgeDist / fadeSpan, 0.f, 1.f);
-  v = v * v;
-  const int a = static_cast<int>(std::lround(v * 252.f));
-  if (a <= 0) {
+  constexpr float kFadeSpanTiles = 2.75f;
+  const float fadeW = std::max(0.02f, kFadeSpanTiles * tileWorld);
+  const float mapEdge[4] = {L, fadeW, 0.f, 0.f};
+
+  if (!res.ok) {
+    DrawPlane({0.f, 0.f, 0.f}, {planeSize, planeSize}, Color{32, 38, 48, 255});
     return;
   }
-  DrawRectangle(0, 0, bufW, bufH, Color{0, 0, 0, static_cast<unsigned char>(a)});
+  SetShaderValue(res.shader, res.locMapEdge, mapEdge, SHADER_UNIFORM_VEC4);
+  DrawModelEx(res.model, {0.f, 0.f, 0.f}, {0.f, 1.f, 0.f}, 0.f, {planeSize, 1.f, planeSize}, WHITE);
 }
 
 }  // namespace
@@ -112,6 +199,8 @@ int main() {
 
   RenderTexture2D worldTarget = LoadRenderTexture(kWorldBufferW, kWorldBufferH);
   SetTextureFilter(worldTarget.texture, TEXTURE_FILTER_POINT);
+
+  GroundDrawResources ground = LoadGroundDrawResources();
 
   Vector2 player{4.5f, 4.5f};
   constexpr float kMoveSpeed = 5.f;
@@ -177,13 +266,16 @@ int main() {
       player.x += input.x * kMoveSpeed * dt;
       player.y += input.y * kMoveSpeed * dt;
     } else {
-      const Vector2 target = NearestTileCenter(player);
+      Vector2 target = NearestTileCenter(player);
+      ClampPlayerToGrid(target, kGridHalf, g_tileWorld);
       const float k = 1.f - std::exp(-kSnapStrength * dt);
       player.x += (target.x - player.x) * k;
       player.y += (target.y - player.y) * k;
       if (std::fabs(target.x - player.x) < 0.001f) player.x = target.x;
       if (std::fabs(target.y - player.y) < 0.001f) player.y = target.y;
     }
+
+    ClampPlayerToGrid(player, kGridHalf, g_tileWorld);
 
     Vector3 focus = TileToWorldCenter(player.x, player.y);
     focus.y += g_tileWorld * 0.35f;
@@ -195,17 +287,13 @@ int main() {
 
     BeginMode3D(camera);
 
-    DrawPlane({0.f, 0.f, 0.f}, {static_cast<float>(kGridHalf * 2 + 2) * g_tileWorld * 2.f,
-                                 static_cast<float>(kGridHalf * 2 + 2) * g_tileWorld * 2.f},
-              Color{32, 38, 48, 255});
+    DrawGroundWithMapEdge(ground, kGridHalf, g_tileWorld);
     DrawWorldGrid(kGridHalf, Color{72, 86, 104, 255});
 
     const Vector3 feet = TileToWorldCenter(player.x, player.y);
     DrawPlayerBlock(feet, Color{210, 115, 70, 255}, Color{35, 18, 10, 255});
 
     EndMode3D();
-
-    DrawMapEdgeFadeOverlay(player, kGridHalf, g_tileWorld, kWorldBufferW, kWorldBufferH);
 
     EndTextureMode();
 
@@ -219,7 +307,7 @@ int main() {
     const int fs = UiPx(18.f);
     const int lh = UiPx(22.f);
     DrawText("WASD: move   [ / ] tile size   - / + zoom preset (4 steps, smooth)", m, m, fs, RAYWHITE);
-    DrawText("World: low-res buffer stretched to fill window (nearest)", m, m + lh, fs,
+    DrawText("World: buffer stretched to window; ground past grid blends to black (world space)", m, m + lh, fs,
              Color{200, 200, 200, 255});
     DrawText(TextFormat("Internal %dx%d  window %dx%d  uiScale %.2f", kWorldBufferW, kWorldBufferH,
                         GetScreenWidth(), GetScreenHeight(), static_cast<double>(UiScale())),
@@ -234,6 +322,7 @@ int main() {
     EndDrawing();
   }
 
+  UnloadGroundDrawResources(ground);
   UnloadRenderTexture(worldTarget);
   CloseWindow();
   return 0;
