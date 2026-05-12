@@ -6,8 +6,7 @@
 
 namespace {
 
-// --- World / sprite layer: fixed internal resolution (author sprites for this canvas).
-// All gameplay + billboards + 3D scene draw here; upscale is integer + nearest = crisp pixels.
+// --- World / sprite layer: fixed internal resolution, stretched to fill the window (nearest filter).
 constexpr int kWorldBufferW = 640;
 constexpr int kWorldBufferH = 360;
 
@@ -29,7 +28,10 @@ int UiPx(float logicalPixels) {
 // World meters per grid tile — tweak with [ / ].
 float g_tileWorld = 1.f;
 
-float g_camDist = 14.f;
+// Four fixed orbit distances (index 0 = closest, 3 = farthest). g_camDist eases toward the active preset.
+constexpr float kCamDistLevels[4] = {6.5f, 9.5f, 13.f, 18.f};
+constexpr float kCamZoomSmooth = 20.f;  // larger = snappier approach to preset
+float g_camDist = kCamDistLevels[1];
 float g_camPitchDeg = 50.f;
 float g_camYawDeg = 42.f;
 
@@ -73,26 +75,29 @@ void DrawPlayerBlock(Vector3 baseCenter, Color fill, Color outline) {
   DrawCubeWires(c, s * 2.f, h, s * 2.f, outline);
 }
 
-// Integer scale of world buffer into the window; letterboxes the rest.
-Rectangle WorldDestRect(int bufW, int bufH) {
-  const int sw = GetScreenWidth();
-  const int sh = GetScreenHeight();
-  int scale = std::min(sw / bufW, sh / bufH);
-  if (scale < 1) {
-    scale = 1;
-  }
-  const int dw = bufW * scale;
-  const int dh = bufH * scale;
-  const int ox = (sw - dw) / 2;
-  const int oy = (sh - dh) / 2;
-  return {static_cast<float>(ox), static_cast<float>(oy), static_cast<float>(dw), static_cast<float>(dh)};
-}
-
-void DrawWorldBufferToScreen(const RenderTexture2D& worldRt, int bufW, int bufH) {
-  const Rectangle dest = WorldDestRect(bufW, bufH);
+// Full-window stretch of world RT (aspect ratio follows window).
+void DrawWorldBufferToScreen(const RenderTexture2D& worldRt) {
+  const Rectangle dest{0.f, 0.f, static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())};
   const Rectangle src{0.f, 0.f, static_cast<float>(worldRt.texture.width),
                       -static_cast<float>(worldRt.texture.height)};
   DrawTexturePro(worldRt.texture, src, dest, {0.f, 0.f}, 0.f, WHITE);
+}
+
+// Darken the view as the player approaches the same bounds as DrawWorldGrid (±L in world X/Z).
+void DrawMapEdgeFadeOverlay(const Vector2& playerTile, int gridHalf, float tileWorld, int bufW, int bufH) {
+  const float L = static_cast<float>(gridHalf) * tileWorld;
+  const float wx = playerTile.x * tileWorld;
+  const float wz = playerTile.y * tileWorld;
+  const float edgeDist = std::min(L - std::fabs(wx), L - std::fabs(wz));
+  constexpr float kFadeSpanTiles = 3.25f;
+  const float fadeSpan = std::max(0.05f, kFadeSpanTiles * tileWorld);
+  float v = 1.f - std::clamp(edgeDist / fadeSpan, 0.f, 1.f);
+  v = v * v;
+  const int a = static_cast<int>(std::lround(v * 252.f));
+  if (a <= 0) {
+    return;
+  }
+  DrawRectangle(0, 0, bufW, bufH, Color{0, 0, 0, static_cast<unsigned char>(a)});
 }
 
 }  // namespace
@@ -116,20 +121,32 @@ int main() {
   camera.fovy = 50.f;
   camera.projection = CAMERA_PERSPECTIVE;
 
+  int camZoomTarget = 1;
+
   while (!WindowShouldClose()) {
     const float dt = GetFrameTime();
+
+    if (IsKeyPressed(KEY_MINUS) || IsKeyPressed(KEY_KP_SUBTRACT)) {
+      camZoomTarget = std::max(0, camZoomTarget - 1);
+    }
+    if (IsKeyPressed(KEY_EQUAL) || IsKeyPressed(KEY_KP_ADD)) {
+      camZoomTarget = std::min(3, camZoomTarget + 1);
+    }
+
+    const float camGoal = kCamDistLevels[camZoomTarget];
+    {
+      const float k = 1.f - std::exp(-kCamZoomSmooth * dt);
+      g_camDist += (camGoal - g_camDist) * k;
+      if (std::fabs(g_camDist - camGoal) < 0.004f) {
+        g_camDist = camGoal;
+      }
+    }
 
     if (IsKeyDown(KEY_LEFT_BRACKET)) {
       g_tileWorld = std::max(0.25f, g_tileWorld - 1.2f * dt);
     }
     if (IsKeyDown(KEY_RIGHT_BRACKET)) {
       g_tileWorld += 1.2f * dt;
-    }
-    if (IsKeyDown(KEY_MINUS) || IsKeyDown(KEY_KP_SUBTRACT)) {
-      g_camDist = std::max(6.f, g_camDist - 10.f * dt);
-    }
-    if (IsKeyDown(KEY_EQUAL) || IsKeyDown(KEY_KP_ADD)) {
-      g_camDist += 10.f * dt;
     }
     if (IsKeyDown(KEY_SEMICOLON)) {
       g_camPitchDeg = std::clamp(g_camPitchDeg - 35.f * dt, 28.f, 88.f);
@@ -187,26 +204,31 @@ int main() {
     DrawPlayerBlock(feet, Color{210, 115, 70, 255}, Color{35, 18, 10, 255});
 
     EndMode3D();
+
+    DrawMapEdgeFadeOverlay(player, kGridHalf, g_tileWorld, kWorldBufferW, kWorldBufferH);
+
     EndTextureMode();
 
     // ----- Compositing + Layer 2: UI (full window, independent layout) -----
     BeginDrawing();
     ClearBackground(Color{8, 9, 12, 255});
 
-    DrawWorldBufferToScreen(worldTarget, kWorldBufferW, kWorldBufferH);
+    DrawWorldBufferToScreen(worldTarget);
 
     const int m = UiPx(12.f);
     const int fs = UiPx(18.f);
     const int lh = UiPx(22.f);
-    DrawText("WASD: move   [ / ] tile size   - / + dist   ; / ' pitch   , / . yaw", m, m, fs, RAYWHITE);
-    DrawText("World buffer: pixel-consistent (nearest integer scale)", m, m + lh, fs,
+    DrawText("WASD: move   [ / ] tile size   - / + zoom preset (4 steps, smooth)", m, m, fs, RAYWHITE);
+    DrawText("World: low-res buffer stretched to fill window (nearest)", m, m + lh, fs,
              Color{200, 200, 200, 255});
     DrawText(TextFormat("Internal %dx%d  window %dx%d  uiScale %.2f", kWorldBufferW, kWorldBufferH,
                         GetScreenWidth(), GetScreenHeight(), static_cast<double>(UiScale())),
              m, m + lh * 2, fs, Color{170, 210, 170, 255});
-    DrawText(TextFormat("tileWorld=%.2f  dist=%.1f  pitch=%.0f°  yaw=%.0f°",
-                        static_cast<double>(g_tileWorld), static_cast<double>(g_camDist),
-                        static_cast<double>(g_camPitchDeg), static_cast<double>(g_camYawDeg)),
+    DrawText(TextFormat(
+                 "tileWorld=%.2f  preset %d/4  dist %.1f→%.1f  pitch=%.0f°  yaw=%.0f°",
+                 static_cast<double>(g_tileWorld), camZoomTarget + 1, static_cast<double>(g_camDist),
+                 static_cast<double>(kCamDistLevels[camZoomTarget]), static_cast<double>(g_camPitchDeg),
+                 static_cast<double>(g_camYawDeg)),
              m, m + lh * 3, fs, Color{160, 200, 230, 255});
 
     EndDrawing();
