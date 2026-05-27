@@ -18,5 +18,21 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(raylib)
 
-add_executable(cpptest src/main.cpp)
-target_link_libraries(cpptest PRIVATE raylib)
+FetchContent_Declare(
+  json
+  GIT_REPOSITORY https://github.com/nlohmann/json.git
+  GIT_TAG v3.11.3
+  GIT_SHALLOW TRUE
+)
+FetchContent_MakeAvailable(json)
+
+add_executable(cpptest src/main.cpp src/ldtk_load.cpp)
+target_include_directories(cpptest PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(cpptest PRIVATE raylib nlohmann_json::nlohmann_json)
+
+add_custom_command(
+  TARGET cpptest
+  POST_BUILD
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/map"
+          "$<TARGET_FILE_DIR:cpptest>/map"
+  COMMENT "Copy LDtk maps next to executable")
