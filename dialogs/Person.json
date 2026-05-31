@@ -1,0 +1,30 @@
+{
+  "default": {
+    "steps": [
+      { "text": "${instance}: Hi there, traveler. The city needs your help." },
+      {
+        "text": "Will you accept the quest?",
+        "choices": [
+          { "label": "Yes", "next_step": 2 },
+          { "label": "No", "next_step": 3 }
+        ]
+      },
+      { "text": "Excellent! Return when you've completed the task." },
+      { "text": "Very well. Come back if you change your mind." }
+    ]
+  },
+  "Person001": {
+    "steps": [
+      { "text": "Person001: Oh, it's you again! Did you bring the items?" },
+      {
+        "text": "Do you have the items?",
+        "choices": [
+          { "label": "Yes", "next_step": 2 },
+          { "label": "No", "next_step": 3 }
+        ]
+      },
+      { "text": "Thank you! Here's your reward." },
+      { "text": "Please return when you have them." }
+    ]
+  }
+}

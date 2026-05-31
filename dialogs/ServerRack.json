@@ -1,0 +1,20 @@
+{
+  "steps": [
+    {
+      "text": "${instance}: SYSTEM ALERT. Manual inspection required."
+    },
+    {
+      "text": "Run diagnostics now?",
+      "choices": [
+        {"label": "Inspect rack", "next_step": 2},
+        {"label": "Leave it", "next_step": 3}
+      ]
+    },
+    {
+      "text": "Diagnostics complete. All systems nominal."
+    },
+    {
+      "text": "Rack left untouched."
+    }
+  ]
+}

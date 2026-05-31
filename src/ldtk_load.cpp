@@ -1,6 +1,7 @@
 #include "ldtk_load.hpp"
 
 #include <fstream>
+#include <iomanip>
 #include <sstream>
 
 #include <nlohmann/json.hpp>
@@ -17,6 +18,13 @@ bool LayerIdentifierMatches(const std::string& id) {
     return true;
   }
   return false;
+}
+
+bool InteractablesLayerIdentifierMatches(const std::string& id) {
+  if (id.empty()) {
+    return false;
+  }
+  return id == "Interactables" || id == "interactables";
 }
 
 }  // namespace
@@ -54,7 +62,8 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
     return "Level missing layerInstances";
   }
 
-  const json* chosen = nullptr;
+  const json* wall_layer = nullptr;
+  const json* interact_layer = nullptr;
   for (const auto& layer : level["layerInstances"]) {
     const std::string type = layer.value("__type", std::string{});
     if (type != "IntGrid") {
@@ -65,24 +74,17 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
     }
     const std::string lid = layer.value("__identifier", std::string{});
     if (LayerIdentifierMatches(lid)) {
-      chosen = &layer;
-      break;
+      wall_layer = &layer;
+    }
+    if (InteractablesLayerIdentifierMatches(lid)) {
+      interact_layer = &layer;
     }
   }
-  if (chosen == nullptr) {
-    for (const auto& layer : level["layerInstances"]) {
-      if (layer.value("__type", std::string{}) == "IntGrid" && layer.contains("intGridCsv") &&
-          layer["intGridCsv"].is_array()) {
-        chosen = &layer;
-        break;
-      }
-    }
-  }
-  if (chosen == nullptr) {
-    return "No IntGrid layer with intGridCsv found in level";
+  if (wall_layer == nullptr) {
+    return "No Walls IntGrid layer with intGridCsv found in level";
   }
 
-  const auto& layer = *chosen;
+  const auto& layer = *wall_layer;
   m.c_wid = layer.value("__cWid", 0);
   m.c_hei = layer.value("__cHei", 0);
   m.grid_px = layer.value("__gridSize", root.value("defaultGridSize", 32));
@@ -103,6 +105,42 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
   size_t i = 0;
   for (const auto& v : csv) {
     m.walls[i++] = v.get<int>();
+  }
+
+  m.interactables.assign(expected, 0);
+  m.interactable_names.assign(expected, std::string{});
+  m.interactable_type_ids.clear();
+
+  if (interact_layer != nullptr) {
+    if ((*interact_layer).contains("intGridValues") && (*interact_layer)["intGridValues"].is_array()) {
+      for (const auto& value_entry : (*interact_layer)["intGridValues"]) {
+        const int value = value_entry.value("value", 0);
+        const std::string identifier = value_entry.value("identifier", std::string{});
+        if (value != 0 && !identifier.empty()) {
+          m.interactable_type_ids[value] = identifier;
+        }
+      }
+    }
+
+    const auto& interact_csv = (*interact_layer)["intGridCsv"];
+    if (interact_csv.is_array() && interact_csv.size() == expected) {
+      i = 0;
+      std::unordered_map<std::string, int> type_counts;
+      for (const auto& v : interact_csv) {
+        const int value = v.get<int>();
+        m.interactables[i] = value;
+        if (value != 0) {
+          const std::string type_name = m.interactable_type_ids.count(value)
+                                            ? m.interactable_type_ids[value]
+                                            : std::string{"Unknown"};
+          const int count = ++type_counts[type_name];
+          std::ostringstream oss;
+          oss << type_name << std::setw(3) << std::setfill('0') << count;
+          m.interactable_names[i] = oss.str();
+        }
+        ++i;
+      }
+    }
   }
 
   out = std::move(m);
