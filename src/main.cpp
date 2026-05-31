@@ -93,13 +93,6 @@ bool IsWallAtPlayer(const Vector2& p, const GameMap& m) {
   return false;
 }
 
-Vector2 CardinalDirection(const Vector2& v) {
-  if (std::fabs(v.x) >= std::fabs(v.y)) {
-    return v.x >= 0.f ? Vector2{1.f, 0.f} : Vector2{-1.f, 0.f};
-  }
-  return v.y >= 0.f ? Vector2{0.f, 1.f} : Vector2{0.f, -1.f};
-}
-
 struct DialogChoice {
   std::string label;
   int next_step = -1;
@@ -115,16 +108,26 @@ struct DialogTree {
   int current_step = 0;
 };
 
-bool GetAdjacentInteractable(const Vector2& player, const Vector2& facing, const GameMap& m, int& out_item,
+bool GetAdjacentInteractable(const Vector2& player, const GameMap& m, int& out_item,
                              std::string& out_name, std::string& out_type) {
   int cx = 0, cy = 0;
   PlayerToCell(player, m, cx, cy);
-  const int tx = cx + static_cast<int>(facing.x);
-  const int ty = cy + static_cast<int>(facing.y);
-  if (!m.InBounds(tx, ty)) {
-    return false;
+  // Scan all four primary directions; interact with the first neighbor that
+  // holds an interactable, independent of which way the player last moved.
+  constexpr int kDirs[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
+  int tx = 0, ty = 0;
+  bool found = false;
+  for (const auto& d : kDirs) {
+    const int nx = cx + d[0];
+    const int ny = cy + d[1];
+    if (m.InBounds(nx, ny) && m.HasInteractable(nx, ny)) {
+      tx = nx;
+      ty = ny;
+      found = true;
+      break;
+    }
   }
-  if (!m.HasInteractable(tx, ty)) {
+  if (!found) {
     return false;
   }
   out_item = m.Interactable(tx, ty);
@@ -534,7 +537,6 @@ int main() {
   bool was_moving = false;
   bool was_snapping = false;
   Vector2 player_vel{0.f, 0.f};
-  Vector2 player_facing{0.f, -1.f};
   bool interaction_dialog = false;
   std::string active_interactable_name;
   std::string active_interactable_type;
@@ -688,7 +690,6 @@ int main() {
         player_vel.y += (desired.y - player_vel.y) * accel_k;
         player.x += player_vel.x * dt;
         player.y += player_vel.y * dt;
-        player_facing = CardinalDirection(move);
         was_snapping = false;
       } else {
         player_vel = {0.f, 0.f};
@@ -721,7 +722,7 @@ int main() {
         }
       }
 
-      has_adjacent_interactable = GetAdjacentInteractable(player, player_facing, map, adjacent_item,
+      has_adjacent_interactable = GetAdjacentInteractable(player, map, adjacent_item,
                                                           adjacent_name, adjacent_type);
       if (IsKeyPressed(KEY_E) && has_adjacent_interactable) {
         interaction_dialog = true;
