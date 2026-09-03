@@ -6,6 +6,13 @@
 
 #include <nlohmann/json.hpp>
 
+// START REMOVE-ALL STUDY NOTES
+// This file is the map/level importer. It reads the LDtk JSON file and turns the
+// raw grid data into a simplified GameMap structure that the rest of the project
+// can reason about. If you want to strip this guide out later, delete everything
+// between the START and END markers in this file and in main.cpp.
+// END REMOVE-ALL STUDY NOTES
+
 namespace {
 
 using nlohmann::json;
@@ -29,6 +36,20 @@ bool InteractablesLayerIdentifierMatches(const std::string& id) {
 
 }  // namespace
 
+// START REMOVE-ALL STUDY NOTES
+// LoadLdtkLevel does the heavy lifting of translating an LDtk export into a
+// runtime-friendly format:
+//  1. Open the JSON file and validate the top-level structure.
+//  2. Pick the requested level from the "levels" array.
+//  3. Search the layer instances for the wall grid and the interactable grid.
+//  4. Copy the intGridCsv values into the GameMap::walls and interactables arrays.
+//  5. Record metadata such as cell size, level name, and named interactable types.
+//  6. Return an empty string on success or an error string if the file is invalid.
+//
+// This separation is useful because the rest of the game does not need to know
+// about the raw LDtk schema; it only needs functions such as IsWall(), InBounds(),
+// and HasInteractable() from GameMap.
+// END REMOVE-ALL STUDY NOTES
 std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMap& out) {
   GameMap m{};
   m.source_path = path;

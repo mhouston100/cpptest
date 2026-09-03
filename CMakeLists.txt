@@ -26,7 +26,13 @@ FetchContent_Declare(
 )
 FetchContent_MakeAvailable(json)
 
-add_executable(cpptest src/main.cpp src/ldtk_load.cpp)
+add_executable(cpptest
+  src/main.cpp
+  src/ldtk_load.cpp
+  src/player.cpp
+  src/camera.cpp
+  src/dialog.cpp
+  src/render.cpp)
 target_include_directories(cpptest PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cpptest PRIVATE raylib nlohmann_json::nlohmann_json)
 

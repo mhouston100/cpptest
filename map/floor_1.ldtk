@@ -99,7 +99,7 @@
 	], "enums": [], "externalEnums": [], "levelFields": [] },
 	"levels": [
 		{
-			"identifier": "Level_1",
+			"identifier": "Level_0",
 			"iid": "e36901b1-48b0-11f1-8433-297c7b27a294",
 			"uid": 0,
 			"worldX": 0,
@@ -120,7 +120,7 @@
 			"fieldInstances": [],
 			"layerInstances": [
 				{
-					"__identifier": "_Level_walls",
+					"__identifier": "Walls_0",
 					"__type": "IntGrid",
 					"__cWid": 32,
 					"__cHei": 32,
