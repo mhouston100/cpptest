@@ -40,6 +40,16 @@ Letterbox UiLetterbox() {
                           static_cast<float>(kUiLogicalH));
 }
 
+Vector2 LogicalToScreenPoint(const float logical_x, const float logical_y, const Letterbox& box) {
+  return Vector2{box.dest.x + logical_x * box.scale, box.dest.y + logical_y * box.scale};
+}
+
+Rectangle LogicalToScreenRect(const float logical_x, const float logical_y, const float logical_w,
+                             const float logical_h, const Letterbox& box) {
+  return Rectangle{box.dest.x + logical_x * box.scale, box.dest.y + logical_y * box.scale,
+                   logical_w * box.scale, logical_h * box.scale};
+}
+
 void DrawLetterboxBars(const Letterbox& box, const Color color) {
   const float sw = static_cast<float>(GetScreenWidth());
   const float sh = static_cast<float>(GetScreenHeight());
