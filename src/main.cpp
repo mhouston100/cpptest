@@ -53,6 +53,7 @@ int main() {
   SetConfigFlags(FLAG_WINDOW_RESIZABLE);
   InitWindow(kDefaultWindowW, kDefaultWindowH, "cpptest — maps");
   SetWindowMinSize(640, 360);
+  SetExitKey(KEY_NULL);
   SetWindowFocused();
   SetTargetFPS(60);
 
@@ -91,18 +92,29 @@ int main() {
   std::string active_interactable_name;
   std::string active_interactable_type;
   DialogTree active_dialog;
-  constexpr bool in_menu = false;
+  bool in_menu = false;
 
   while (!WindowShouldClose()) {
     const float dt = GetFrameTime();
     GameMode mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
+
+    if (IsKeyPressed(KEY_ESCAPE)) {
+      if (mode == GameMode::Playing) {
+        in_menu = true;
+      } else if (mode == GameMode::Menu) {
+        in_menu = false;
+      } else if (mode == GameMode::Dialog) {
+        interaction_dialog = false;
+      }
+    }
+    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
 
     // START REMOVE-ALL STUDY NOTES
     // Map transitions happen as a fade rather than a hard reset so the level swap
     // feels smoother and avoids the player noticing the world being reloaded.
     // END REMOVE-ALL STUDY NOTES
     if (IsKeyPressed(KEY_F1)) {
-      if (map_fade == MapFade::Idle) {
+      if (mode == GameMode::Playing) {
         const int n = static_cast<int>(std::size(kMapCatalog));
         pending_map_index = (map_index - 1 + n) % n;
         map_fade = MapFade::Out;
@@ -110,7 +122,7 @@ int main() {
       }
     }
     if (IsKeyPressed(KEY_F2)) {
-      if (map_fade == MapFade::Idle) {
+      if (mode == GameMode::Playing) {
         const int n = static_cast<int>(std::size(kMapCatalog));
         pending_map_index = (map_index + 1) % n;
         map_fade = MapFade::Out;
@@ -231,9 +243,10 @@ int main() {
             interaction_dialog = false;
           }
         }
-        if (IsKeyPressed(KEY_ESCAPE)) {
-          interaction_dialog = false;
-        }
+      }
+    } else if (mode == GameMode::Menu) {
+      if (load_err.empty()) {
+        UpdatePlayerMovement(player_state, map, Vector2{0.f, 0.f}, dt, g_camYawDeg);
       }
     }
 
@@ -326,6 +339,15 @@ int main() {
       }
     } else if (mode == GameMode::Playing && has_adjacent_interactable) {
       DrawText("Press E to interact", ox + m, oy + hud_h - lh - m, fs, Color{220, 220, 120, 255});
+    } else if (mode == GameMode::Menu) {
+      DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
+      const char* paused = "Paused";
+      const char* hint = "Press ESC to resume";
+      const int title_fs = UiPx(28.f);
+      DrawText(paused, ox + (hud_w - MeasureText(paused, title_fs)) / 2,
+               oy + hud_h / 2 - title_fs, title_fs, RAYWHITE);
+      DrawText(hint, ox + (hud_w - MeasureText(hint, fs)) / 2, oy + hud_h / 2 + lh, fs,
+               Color{200, 200, 200, 255});
     }
 
     EndDrawing();
