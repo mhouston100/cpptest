@@ -9,14 +9,11 @@
         "cwd": "${workspaceFolder}"
       },
       "problemMatcher": [],
-      "group": {
-        "kind": "build",
-        "isDefault": true
-      },
       "presentation": {
-        "reveal": "always",
-        "clear": false,
-        "panel": "shared"
+        "reveal": "silent",
+        "panel": "shared",
+        "showReuseMessage": false,
+        "clear": true
       }
     },
     {
@@ -29,10 +26,16 @@
       "dependsOn": "Build cpptest (Debug)",
       "dependsOrder": "sequence",
       "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
       "presentation": {
         "reveal": "always",
         "panel": "shared",
-        "focus": true
+        "showReuseMessage": false,
+        "focus": false,
+        "clear": false
       }
     }
   ]
