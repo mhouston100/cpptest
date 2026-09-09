@@ -55,6 +55,7 @@ void DrawLabel(const Letterbox& ui, float logical_x, float logical_y, const char
 }
 [[nodiscard]] int DrawChoiceList(const Letterbox& ui, float logical_x, float logical_y,
                                  float logical_w, const std::vector<std::string>& labels,
+                                 int selected_index = -1, bool number_keys = true,
                                  const UiTheme& theme = kUiTheme);
 
 }  // namespace cpptest

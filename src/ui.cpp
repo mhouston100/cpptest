@@ -116,7 +116,7 @@ float DrawSlider(const Letterbox& ui, const float logical_x, const float logical
 
 int DrawChoiceList(const Letterbox& ui, const float logical_x, const float logical_y,
                    const float logical_w, const std::vector<std::string>& labels,
-                   const UiTheme& theme) {
+                   const int selected_index, const bool number_keys, const UiTheme& theme) {
   const float row_h = UiChoiceRowHeight(theme);
   int picked = -1;
   const int n = static_cast<int>(labels.size());
@@ -124,15 +124,20 @@ int DrawChoiceList(const Letterbox& ui, const float logical_x, const float logic
     const float y = logical_y + row_h * static_cast<float>(i);
     const Rectangle hit = LogicalToScreenRect(logical_x, y, logical_w, row_h, ui);
     const bool hover = CheckCollisionPointRec(GetMousePosition(), hit);
+    if (i == selected_index) {
+      DrawRectangleRec(hit, theme.button_fill);
+    }
     if (hover) {
       DrawRectangleRec(hit, theme.button_hover);
     }
-    DrawLabel(ui, logical_x + UiSpace(1), y + (row_h - theme.type_body) * 0.5f,
-              TextFormat("%d: %s", i + 1, labels[i].c_str()), theme.type_body, theme.text);
+    const char* row =
+        number_keys ? TextFormat("%d: %s", i + 1, labels[i].c_str()) : labels[i].c_str();
+    DrawLabel(ui, logical_x + UiSpace(1), y + (row_h - theme.type_body) * 0.5f, row, theme.type_body,
+              theme.text);
     if (hover && IsMouseButtonPressed(MOUSE_BUTTON_LEFT)) {
       picked = i;
     }
-    if (i < 9 && IsKeyPressed(KEY_ONE + i)) {
+    if (number_keys && i < 9 && IsKeyPressed(KEY_ONE + i)) {
       picked = i;
     }
   }

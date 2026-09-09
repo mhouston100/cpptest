@@ -7,4 +7,5 @@ compile_commands.json
 *.a
 *.so
 *.dylib
+options.json
 CMakeUserPresets.json

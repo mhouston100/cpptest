@@ -44,4 +44,6 @@ add_custom_command(
   POST_BUILD
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/map"
           "$<TARGET_FILE_DIR:cpptest>/map"
-  COMMENT "Copy LDtk maps next to executable")
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/dialogs"
+          "$<TARGET_FILE_DIR:cpptest>/dialogs"
+  COMMENT "Copy LDtk maps and dialog JSON next to executable")

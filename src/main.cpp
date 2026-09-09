@@ -38,6 +38,29 @@ constexpr MapCatalogEntry kMapCatalog[] = {
 };
 
 enum class MapFade { Idle, Out, In };
+enum class PausePage { Root, Options };
+
+int WindowModeIndex(const cpptest::WindowMode mode) {
+  switch (mode) {
+    case cpptest::WindowMode::Borderless:
+      return 1;
+    case cpptest::WindowMode::Fullscreen:
+      return 2;
+    case cpptest::WindowMode::Windowed:
+    default:
+      return 0;
+  }
+}
+
+cpptest::WindowMode WindowModeFromIndex(const int index) {
+  if (index == 1) {
+    return cpptest::WindowMode::Borderless;
+  }
+  if (index == 2) {
+    return cpptest::WindowMode::Fullscreen;
+  }
+  return cpptest::WindowMode::Windowed;
+}
 
 Vector3 TileToWorldCenter(const float tx, const float tz) {
   return {tx * g_tileWorld, 0.f, tz * g_tileWorld};
@@ -48,7 +71,7 @@ Vector3 TileToWorldCenter(const float tx, const float tz) {
 int main() {
   using namespace cpptest;
 
-  GameOptions options = SanitizeGameOptions(GameOptions{});
+  GameOptions options = LoadGameOptions();
 
   // START REMOVE-ALL STUDY NOTES
   // Initialize the application shell first so that everything else has a valid
@@ -101,6 +124,10 @@ int main() {
   std::string active_interactable_type;
   DialogTree active_dialog;
   bool in_menu = false;
+  PausePage pause_page = PausePage::Root;
+  GameOptions draft_options{};
+  int draft_mode = 0;
+  int draft_res = 2;
 
   while (!WindowShouldClose()) {
     const float dt = GetFrameTime();
@@ -109,8 +136,13 @@ int main() {
     if (IsKeyPressed(KEY_ESCAPE)) {
       if (mode == GameMode::Playing) {
         in_menu = true;
+        pause_page = PausePage::Root;
       } else if (mode == GameMode::Menu) {
-        in_menu = false;
+        if (pause_page == PausePage::Options) {
+          pause_page = PausePage::Root;
+        } else {
+          in_menu = false;
+        }
       } else if (mode == GameMode::Dialog) {
         interaction_dialog = false;
       }
@@ -349,38 +381,98 @@ int main() {
                 Color{220, 220, 120, 255});
     } else if (mode == GameMode::Menu) {
       DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
-      const float panel_w = 520.f;
-      const float panel_h = 360.f;
-      const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
-      const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
-      DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
-      const char* paused = "Paused";
-      const char* hint = "ESC to resume";
-      const char* reset_label = "Reset";
       const float title = kUiTheme.type_title;
-      const float inner_x = panel_x + UiSpace(3);
-      const float inner_w = panel_w - UiSpace(6);
-      DrawLabel(ui, panel_x + (panel_w - UiMeasure(paused, title)) * 0.5f, panel_y + UiSpace(3),
-                paused, title, kUiTheme.text);
-      DrawLabel(ui, panel_x + (panel_w - UiMeasure(hint, body)) * 0.5f, panel_y + UiSpace(8), hint,
-                body, kUiTheme.text_muted);
-      const bool vsync = DrawCheckbox(ui, inner_x, panel_y + UiSpace(13), "Vsync", options.vsync);
-      if (vsync != options.vsync) {
-        options.vsync = vsync;
-        ApplyGameOptionsRuntime(options);
-      }
-      master_volume =
-          DrawSlider(ui, inner_x, panel_y + UiSpace(18), inner_w, 0.f, 1.f, master_volume, "Volume",
-                     &master_volume);
-      SetMasterVolume(master_volume);
-      const Vector2 reset_size = UiButtonSize(reset_label);
-      const float reset_x = panel_x + (panel_w - reset_size.x) * 0.5f;
-      const float reset_y = panel_y + panel_h - reset_size.y - UiSpace(3);
-      if (DrawButton(ui, reset_x, reset_y, reset_label, KEY_R) && load_err.empty()) {
-        SpawnPlayerAtFirstWalkable(map, player_state.position);
-        player_state.velocity = {0.f, 0.f};
-        player_state.was_moving = false;
-        player_state.was_snapping = false;
+      if (pause_page == PausePage::Root) {
+        const float panel_w = 520.f;
+        const float panel_h = 320.f;
+        const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
+        const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
+        DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
+        const char* paused = "Paused";
+        const char* hint = "ESC to resume";
+        const float inner_x = panel_x + UiSpace(3);
+        const float inner_w = panel_w - UiSpace(6);
+        DrawLabel(ui, panel_x + (panel_w - UiMeasure(paused, title)) * 0.5f, panel_y + UiSpace(3),
+                  paused, title, kUiTheme.text);
+        DrawLabel(ui, panel_x + (panel_w - UiMeasure(hint, body)) * 0.5f, panel_y + UiSpace(8), hint,
+                  body, kUiTheme.text_muted);
+        master_volume =
+            DrawSlider(ui, inner_x, panel_y + UiSpace(12), inner_w, 0.f, 1.f, master_volume, "Volume",
+                       &master_volume);
+        SetMasterVolume(master_volume);
+        const Vector2 opt_size = UiButtonSize("Options");
+        const Vector2 reset_size = UiButtonSize("Reset");
+        const float btn_y = panel_y + panel_h - reset_size.y - UiSpace(3);
+        const float gap = UiSpace(2);
+        const float pair_w = opt_size.x + gap + reset_size.x;
+        const float opt_x = panel_x + (panel_w - pair_w) * 0.5f;
+        if (DrawButton(ui, opt_x, btn_y, "Options")) {
+          draft_options = options;
+          draft_mode = WindowModeIndex(options.window_mode);
+          draft_res = VideoPresetIndex(options.width, options.height);
+          pause_page = PausePage::Options;
+        }
+        if (DrawButton(ui, opt_x + opt_size.x + gap, btn_y, "Reset", KEY_R) && load_err.empty()) {
+          SpawnPlayerAtFirstWalkable(map, player_state.position);
+          player_state.velocity = {0.f, 0.f};
+          player_state.was_moving = false;
+          player_state.was_snapping = false;
+        }
+      } else {
+        const float panel_w = 640.f;
+        const float panel_h = 620.f;
+        const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
+        const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
+        DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
+        const char* heading = "Options";
+        const float inner_x = panel_x + UiSpace(3);
+        const float inner_w = panel_w - UiSpace(6);
+        DrawLabel(ui, panel_x + (panel_w - UiMeasure(heading, title)) * 0.5f, panel_y + UiSpace(3),
+                  heading, title, kUiTheme.text);
+        DrawLabel(ui, inner_x, panel_y + UiSpace(8), "Window mode", body, kUiTheme.text_muted);
+        const std::vector<std::string> mode_labels = {"Windowed", "Borderless", "Fullscreen"};
+        const int mode_picked =
+            DrawChoiceList(ui, inner_x, panel_y + UiSpace(11), inner_w, mode_labels, draft_mode, false);
+        if (mode_picked >= 0) {
+          draft_mode = mode_picked;
+          draft_options.window_mode = WindowModeFromIndex(draft_mode);
+        }
+        float res_y = panel_y + UiSpace(11) + UiChoiceListHeight(3) + UiSpace(2);
+        DrawLabel(ui, inner_x, res_y, "Resolution", body, kUiTheme.text_muted);
+        res_y += line;
+        std::vector<std::string> res_labels;
+        res_labels.reserve(std::size(kVideoPresets));
+        for (const VideoPreset& preset : kVideoPresets) {
+          res_labels.push_back(TextFormat("%d x %d", preset.width, preset.height));
+        }
+        const int res_picked =
+            DrawChoiceList(ui, inner_x, res_y, inner_w, res_labels, draft_res, false);
+        if (res_picked >= 0) {
+          draft_res = res_picked;
+          draft_options.width = kVideoPresets[draft_res].width;
+          draft_options.height = kVideoPresets[draft_res].height;
+        }
+        const float vsync_y = res_y + UiChoiceListHeight(static_cast<int>(std::size(kVideoPresets))) +
+                              UiSpace(2);
+        draft_options.vsync = DrawCheckbox(ui, inner_x, vsync_y, "Vsync", draft_options.vsync);
+        const Vector2 apply_size = UiButtonSize("Apply");
+        const Vector2 back_size = UiButtonSize("Back");
+        const float gap = UiSpace(2);
+        const float btn_y = panel_y + panel_h - apply_size.y - UiSpace(3);
+        const float pair_w = apply_size.x + gap + back_size.x;
+        const float apply_x = panel_x + (panel_w - pair_w) * 0.5f;
+        if (DrawButton(ui, apply_x, btn_y, "Apply", KEY_ENTER)) {
+          if (draft_res >= 0) {
+            draft_options.width = kVideoPresets[draft_res].width;
+            draft_options.height = kVideoPresets[draft_res].height;
+          }
+          options = SanitizeGameOptions(draft_options);
+          ApplyGameOptions(options);
+          SaveGameOptions(options);
+        }
+        if (DrawButton(ui, apply_x + apply_size.x + gap, btn_y, "Back")) {
+          pause_page = PausePage::Root;
+        }
       }
     }
 
