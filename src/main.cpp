@@ -20,8 +20,6 @@
 
 namespace {
 
-constexpr int kWorldBufferW = 640;
-constexpr int kWorldBufferH = 360;
 constexpr float kUiRefScreenW = 960.f;
 constexpr float kUiRefScreenH = 540.f;
 constexpr float kCamZoomSmooth = 20.f;
@@ -64,12 +62,11 @@ int main() {
   // Initialize the application shell first so that everything else has a valid
   // window and render target when it begins to load the map and spawn entities.
   // END REMOVE-ALL STUDY NOTES
-  InitWindow(k_window_w, k_window_h, "cpptest — maps");
-  SetTargetFPS(60);
   SetTraceLogLevel(LOG_INFO);
+  InitWindow(k_window_w, k_window_h, "cpptest — maps");
+  SetWindowFocused();
+  SetTargetFPS(60);
 
-  RenderTexture2D world_target = LoadRenderTexture(kWorldBufferW, kWorldBufferH);
-  SetTextureFilter(world_target.texture, TEXTURE_FILTER_POINT);
   GroundDrawResources ground = LoadGroundDrawResources();
 
   // START REMOVE-ALL STUDY NOTES
@@ -252,7 +249,7 @@ int main() {
     focus.y += g_tileWorld * 0.35f;
     UpdateDiabloStyleCamera(camera, focus);
 
-    BeginTextureMode(world_target);
+    BeginDrawing();
     ClearBackground(Color{12, 14, 20, 255});
     BeginMode3D(camera);
 
@@ -267,11 +264,6 @@ int main() {
     DrawPlayerBlock(feet, Color{210, 115, 70, 255}, Color{35, 18, 10, 255});
 
     EndMode3D();
-    EndTextureMode();
-
-    BeginDrawing();
-    ClearBackground(Color{8, 9, 12, 255});
-    DrawWorldBufferToScreen(world_target);
 
     float fade_overlay = 0.f;
     if (map_fade == MapFade::Out) {
@@ -338,7 +330,6 @@ int main() {
   }
 
   UnloadGroundDrawResources(ground);
-  UnloadRenderTexture(world_target);
   CloseWindow();
   return 0;
 }

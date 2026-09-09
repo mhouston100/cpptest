@@ -32,6 +32,7 @@ add_executable(cpptest
   src/player.cpp
   src/camera.cpp
   src/dialog.cpp
+  src/display.cpp
   src/render.cpp)
 target_include_directories(cpptest PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cpptest PRIVATE raylib nlohmann_json::nlohmann_json)

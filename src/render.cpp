@@ -158,9 +158,3 @@ void DrawPlayerBlock(const Vector3& base_center, const Color fill, const Color o
   DrawCubeWires(c, s * 2.f, h, s * 2.f, outline);
 }
 
-void DrawWorldBufferToScreen(const RenderTexture2D& world_rt) {
-  const Rectangle dest{0.f, 0.f, static_cast<float>(GetScreenWidth()), static_cast<float>(GetScreenHeight())};
-  const Rectangle src{0.f, 0.f, static_cast<float>(world_rt.texture.width),
-                      -static_cast<float>(world_rt.texture.height)};
-  DrawTexturePro(world_rt.texture, src, dest, {0.f, 0.f}, 0.f, WHITE);
-}

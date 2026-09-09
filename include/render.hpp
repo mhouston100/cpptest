@@ -27,4 +27,3 @@ void DrawWorldGridForMap(const GameMap& m, const Color line_color);
 void DrawWallCells(const GameMap& m);
 void DrawInteractables(const GameMap& m);
 void DrawPlayerBlock(const Vector3& base_center, const Color fill, const Color outline);
-void DrawWorldBufferToScreen(const RenderTexture2D& world_rt);

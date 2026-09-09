@@ -1,0 +1,39 @@
+{
+  "version": "2.0.0",
+  "tasks": [
+    {
+      "label": "Build cpptest (Debug)",
+      "type": "shell",
+      "command": "cmake -S \"${workspaceFolder}\" -B \"${workspaceFolder}/build\" -DCMAKE_BUILD_TYPE=Debug && cmake --build \"${workspaceFolder}/build\" --target cpptest -j2",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "problemMatcher": [],
+      "group": {
+        "kind": "build",
+        "isDefault": true
+      },
+      "presentation": {
+        "reveal": "always",
+        "clear": false,
+        "panel": "shared"
+      }
+    },
+    {
+      "label": "Run cpptest",
+      "type": "shell",
+      "command": "\"${workspaceFolder}/build/cpptest\"",
+      "options": {
+        "cwd": "${workspaceFolder}"
+      },
+      "dependsOn": "Build cpptest (Debug)",
+      "dependsOrder": "sequence",
+      "problemMatcher": [],
+      "presentation": {
+        "reveal": "always",
+        "panel": "shared",
+        "focus": true
+      }
+    }
+  ]
+}
