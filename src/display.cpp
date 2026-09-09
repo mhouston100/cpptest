@@ -40,4 +40,20 @@ Letterbox UiLetterbox() {
                           static_cast<float>(kUiLogicalH));
 }
 
+void DrawLetterboxBars(const Letterbox& box, const Color color) {
+  const float sw = static_cast<float>(GetScreenWidth());
+  const float sh = static_cast<float>(GetScreenHeight());
+  const Rectangle d = box.dest;
+  if (d.x > 0.5f) {
+    DrawRectangle(0, 0, static_cast<int>(std::ceil(d.x)), static_cast<int>(sh), color);
+    DrawRectangle(static_cast<int>(std::floor(d.x + d.width)), 0,
+                  static_cast<int>(std::ceil(sw - d.x - d.width)), static_cast<int>(sh), color);
+  }
+  if (d.y > 0.5f) {
+    DrawRectangle(0, 0, static_cast<int>(sw), static_cast<int>(std::ceil(d.y)), color);
+    DrawRectangle(0, static_cast<int>(std::floor(d.y + d.height)), static_cast<int>(sw),
+                  static_cast<int>(std::ceil(sh - d.y - d.height)), color);
+  }
+}
+
 }  // namespace cpptest

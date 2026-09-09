@@ -6,6 +6,8 @@
 
 #include "camera.hpp"
 #include "dialog.hpp"
+#include "display.hpp"
+#include "game.hpp"
 #include "game_map.hpp"
 #include "ldtk_load.hpp"
 #include "player.hpp"
@@ -20,8 +22,6 @@
 
 namespace {
 
-constexpr float kUiRefScreenW = 960.f;
-constexpr float kUiRefScreenH = 540.f;
 constexpr float kCamZoomSmooth = 20.f;
 
 struct MapCatalogEntry {
@@ -36,16 +36,6 @@ constexpr MapCatalogEntry kMapCatalog[] = {
 
 enum class MapFade { Idle, Out, In };
 
-float UiScale() {
-  const float sx = static_cast<float>(GetScreenWidth()) / kUiRefScreenW;
-  const float sy = static_cast<float>(GetScreenHeight()) / kUiRefScreenH;
-  return std::clamp(std::min(sx, sy), 0.5f, 3.f);
-}
-
-int UiPx(const float logical_pixels) {
-  return static_cast<int>(std::lround(logical_pixels * UiScale()));
-}
-
 Vector3 TileToWorldCenter(const float tx, const float tz) {
   return {tx * g_tileWorld, 0.f, tz * g_tileWorld};
 }
@@ -55,15 +45,14 @@ Vector3 TileToWorldCenter(const float tx, const float tz) {
 int main() {
   using namespace cpptest;
 
-  constexpr int k_window_w = 960;
-  constexpr int k_window_h = 540;
-
   // START REMOVE-ALL STUDY NOTES
   // Initialize the application shell first so that everything else has a valid
   // window and render target when it begins to load the map and spawn entities.
   // END REMOVE-ALL STUDY NOTES
   SetTraceLogLevel(LOG_INFO);
-  InitWindow(k_window_w, k_window_h, "cpptest — maps");
+  SetConfigFlags(FLAG_WINDOW_RESIZABLE);
+  InitWindow(kDefaultWindowW, kDefaultWindowH, "cpptest — maps");
+  SetWindowMinSize(640, 360);
   SetWindowFocused();
   SetTargetFPS(60);
 
@@ -102,9 +91,11 @@ int main() {
   std::string active_interactable_name;
   std::string active_interactable_type;
   DialogTree active_dialog;
+  constexpr bool in_menu = false;
 
   while (!WindowShouldClose()) {
     const float dt = GetFrameTime();
+    GameMode mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
 
     // START REMOVE-ALL STUDY NOTES
     // Map transitions happen as a fade rather than a hard reset so the level swap
@@ -188,7 +179,7 @@ int main() {
       g_camYawDeg += 55.f * dt;
     }
 
-    if (load_err.empty() && map_fade == MapFade::Idle) {
+    if (load_err.empty() && mode == GameMode::Playing) {
       Vector2 input{0.f, 0.f};
       if (IsKeyDown(KEY_W)) input.y += 1.f;
       if (IsKeyDown(KEY_S)) input.y -= 1.f;
@@ -214,36 +205,39 @@ int main() {
                                                  dialog_registry);
         active_dialog.current_step = 0;
       }
-
-      if (interaction_dialog) {
-        if (active_dialog.steps.empty()) {
-          interaction_dialog = false;
-        } else {
-          const auto& step = active_dialog.steps[active_dialog.current_step];
-          if (!step.choices.empty()) {
-            for (int i = 0; i < static_cast<int>(step.choices.size()); ++i) {
-              if (IsKeyPressed(KEY_ONE + i)) {
-                const int next_step = step.choices[i].next_step;
-                if (next_step >= 0 && next_step < static_cast<int>(active_dialog.steps.size())) {
-                  active_dialog.current_step = next_step;
-                } else {
-                  interaction_dialog = false;
-                }
+    } else if (mode == GameMode::Dialog) {
+      if (load_err.empty()) {
+        UpdatePlayerMovement(player_state, map, Vector2{0.f, 0.f}, dt, g_camYawDeg);
+      }
+      if (active_dialog.steps.empty()) {
+        interaction_dialog = false;
+      } else {
+        const auto& step = active_dialog.steps[active_dialog.current_step];
+        if (!step.choices.empty()) {
+          for (int i = 0; i < static_cast<int>(step.choices.size()); ++i) {
+            if (IsKeyPressed(KEY_ONE + i)) {
+              const int next_step = step.choices[i].next_step;
+              if (next_step >= 0 && next_step < static_cast<int>(active_dialog.steps.size())) {
+                active_dialog.current_step = next_step;
+              } else {
+                interaction_dialog = false;
               }
             }
-          } else if (IsKeyPressed(KEY_ENTER)) {
-            if (active_dialog.current_step < static_cast<int>(active_dialog.steps.size()) - 1) {
-              active_dialog.current_step += 1;
-            } else {
-              interaction_dialog = false;
-            }
           }
-          if (IsKeyPressed(KEY_ESCAPE)) {
+        } else if (IsKeyPressed(KEY_ENTER)) {
+          if (active_dialog.current_step < static_cast<int>(active_dialog.steps.size()) - 1) {
+            active_dialog.current_step += 1;
+          } else {
             interaction_dialog = false;
           }
         }
+        if (IsKeyPressed(KEY_ESCAPE)) {
+          interaction_dialog = false;
+        }
       }
     }
+
+    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
 
     Vector3 focus = TileToWorldCenter(player_state.position.x, player_state.position.y);
     focus.y += g_tileWorld * 0.35f;
@@ -265,6 +259,9 @@ int main() {
 
     EndMode3D();
 
+    const Letterbox ui = UiLetterbox();
+    DrawLetterboxBars(ui, Color{0, 0, 0, 255});
+
     float fade_overlay = 0.f;
     if (map_fade == MapFade::Out) {
       fade_overlay = std::min(1.f, map_fade_t / k_map_fade_sec);
@@ -277,31 +274,36 @@ int main() {
       DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, a});
     }
 
+    const int ox = static_cast<int>(std::lround(ui.dest.x));
+    const int oy = static_cast<int>(std::lround(ui.dest.y));
+    const int hud_w = static_cast<int>(std::lround(ui.dest.width));
+    const int hud_h = static_cast<int>(std::lround(ui.dest.height));
     const int m = UiPx(12.f);
     const int fs = UiPx(18.f);
     const int lh = UiPx(22.f);
-    DrawText("WASD move   F1/F2 prev/next map (fade)   [ / ] tile size   - / + zoom", m, m, fs, RAYWHITE);
+    DrawText("WASD move   F1/F2 prev/next map (fade)   [ / ] tile size   - / + zoom", ox + m, oy + m, fs,
+             RAYWHITE);
     DrawText(TextFormat("Map %d/%d  %s  level:%s", map_index + 1, static_cast<int>(std::size(kMapCatalog)),
                         kMapCatalog[map_index].path, map.level_identifier.c_str()),
-             m, m + lh, fs, Color{200, 200, 200, 255});
+             ox + m, oy + m + lh, fs, Color{200, 200, 200, 255});
     if (!load_err.empty()) {
-      DrawText(load_err.c_str(), m, m + lh * 2, fs, Color{255, 120, 120, 255});
+      DrawText(load_err.c_str(), ox + m, oy + m + lh * 2, fs, Color{255, 120, 120, 255});
     } else {
       DrawText(TextFormat("%dx%d cells  grid_px=%d  tileWorld=%.2f", map.c_wid, map.c_hei, map.grid_px,
                           static_cast<double>(g_tileWorld)),
-               m, m + lh * 2, fs, Color{170, 210, 170, 255});
+               ox + m, oy + m + lh * 2, fs, Color{170, 210, 170, 255});
     }
-    DrawText(TextFormat("preset %d/4  dist %.1f  pitch=%.0f yaw=%.0f", cam_zoom_target + 1,
+    DrawText(TextFormat("preset %d/4  dist %.1f  pitch=%.0f yaw=%.0f  %s", cam_zoom_target + 1,
                         static_cast<double>(g_camDist), static_cast<double>(g_camPitchDeg),
-                        static_cast<double>(g_camYawDeg)),
-             m, m + lh * 3, fs, Color{160, 200, 230, 255});
+                        static_cast<double>(g_camYawDeg), GameModeName(mode)),
+             ox + m, oy + m + lh * 3, fs, Color{160, 200, 230, 255});
 
-    if (interaction_dialog) {
+    if (mode == GameMode::Dialog) {
       if (!active_dialog.steps.empty()) {
-        const int box_w = GetScreenWidth() - m * 2;
+        const int box_w = hud_w - m * 2;
         const int box_h = UiPx(120.f);
-        const int box_x = m;
-        const int box_y = GetScreenHeight() - box_h - m;
+        const int box_x = ox + m;
+        const int box_y = oy + hud_h - box_h - m;
         DrawRectangle(box_x, box_y, box_w, box_h, Color{12, 14, 20, 215});
         DrawRectangleLines(box_x, box_y, box_w, box_h, Color{190, 190, 240, 255});
         const auto& step = active_dialog.steps[active_dialog.current_step];
@@ -322,8 +324,8 @@ int main() {
       } else {
         interaction_dialog = false;
       }
-    } else if (has_adjacent_interactable) {
-      DrawText("Press E to interact", m, GetScreenHeight() - lh - m, fs, Color{220, 220, 120, 255});
+    } else if (mode == GameMode::Playing && has_adjacent_interactable) {
+      DrawText("Press E to interact", ox + m, oy + hud_h - lh - m, fs, Color{220, 220, 120, 255});
     }
 
     EndDrawing();

@@ -24,5 +24,6 @@ struct Letterbox {
 [[nodiscard]] float UiScale();
 [[nodiscard]] int UiPx(float logical_px);
 [[nodiscard]] Letterbox UiLetterbox();
+void DrawLetterboxBars(const Letterbox& box, Color color);
 
 }  // namespace cpptest
