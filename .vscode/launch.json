@@ -3,14 +3,11 @@
   "configurations": [
     {
       "name": "Run cpptest",
-      "type": "cppdbg",
+      "type": "node-terminal",
       "request": "launch",
-      "program": "/bin/true",
+      "command": "${workspaceFolder}/build/cpptest",
       "cwd": "${workspaceFolder}",
-      "preLaunchTask": "Run cpptest",
-      "MIMode": "gdb",
-      "miDebuggerPath": "/usr/bin/gdb",
-      "externalConsole": false
+      "preLaunchTask": "Build cpptest (Debug)"
     },
     {
       "name": "Debug cpptest",

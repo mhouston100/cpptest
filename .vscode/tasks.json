@@ -19,7 +19,7 @@
     {
       "label": "Run cpptest",
       "type": "shell",
-      "command": "\"${workspaceFolder}/build/cpptest\"",
+      "command": "${workspaceFolder}/build/cpptest",
       "options": {
         "cwd": "${workspaceFolder}"
       },
