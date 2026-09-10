@@ -102,7 +102,7 @@ int main() {
 
   PlayerState player_state{};
   if (load_err.empty()) {
-    SpawnPlayerAtFirstWalkable(map, player_state.position);
+    SpawnPlayerAtSpawn(map, "start", player_state.position);
   }
 
   int map_index = 0;
@@ -179,7 +179,7 @@ int main() {
           TraceLog(LOG_ERROR, "Map load: %s", load_err.c_str());
         } else {
           map_index = pending_map_index;
-          SpawnPlayerAtFirstWalkable(map, player_state.position);
+          SpawnPlayerAtSpawn(map, "start", player_state.position);
         }
         map_fade = MapFade::In;
         map_fade_t = 0.f;
@@ -413,7 +413,7 @@ int main() {
           pause_page = PausePage::Options;
         }
         if (DrawButton(ui, opt_x + opt_size.x + gap, btn_y, "Reset", KEY_R) && load_err.empty()) {
-          SpawnPlayerAtFirstWalkable(map, player_state.position);
+          SpawnPlayerAtSpawn(map, "start", player_state.position);
           player_state.velocity = {0.f, 0.f};
           player_state.was_moving = false;
           player_state.was_snapping = false;

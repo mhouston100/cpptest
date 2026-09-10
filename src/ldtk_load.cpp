@@ -3,6 +3,7 @@
 #include <fstream>
 #include <iomanip>
 #include <sstream>
+#include <string>
 
 #include <nlohmann/json.hpp>
 
@@ -34,6 +35,152 @@ bool InteractablesLayerIdentifierMatches(const std::string& id) {
   return id == "Interactables" || id == "interactables";
 }
 
+bool FieldIdentifierMatches(const std::string& id, const char* snake, const char* pascal) {
+  return id == snake || id == pascal;
+}
+
+std::string FieldString(const json& entity, const char* snake, const char* pascal) {
+  if (!entity.contains("fieldInstances") || !entity["fieldInstances"].is_array()) {
+    return {};
+  }
+  for (const auto& field : entity["fieldInstances"]) {
+    const std::string id = field.value("__identifier", std::string{});
+    if (!FieldIdentifierMatches(id, snake, pascal)) {
+      continue;
+    }
+    const auto& value = field["__value"];
+    if (value.is_string()) {
+      return value.get<std::string>();
+    }
+    return {};
+  }
+  return {};
+}
+
+bool ParseEntityKind(const std::string& identifier, MapEntityKind& out) {
+  if (identifier == "Spawn") {
+    out = MapEntityKind::Spawn;
+    return true;
+  }
+  if (identifier == "Warp") {
+    out = MapEntityKind::Warp;
+    return true;
+  }
+  if (identifier == "Npc") {
+    out = MapEntityKind::Npc;
+    return true;
+  }
+  if (identifier == "Prop") {
+    out = MapEntityKind::Prop;
+    return true;
+  }
+  return false;
+}
+
+bool CellFromEntity(const json& entity, int grid_px, int& cx, int& cy) {
+  if (entity.contains("__grid") && entity["__grid"].is_array() && entity["__grid"].size() >= 2) {
+    cx = entity["__grid"][0].get<int>();
+    cy = entity["__grid"][1].get<int>();
+    return true;
+  }
+  if (entity.contains("px") && entity["px"].is_array() && entity["px"].size() >= 2 && grid_px > 0) {
+    cx = entity["px"][0].get<int>() / grid_px;
+    cy = entity["px"][1].get<int>() / grid_px;
+    return true;
+  }
+  return false;
+}
+
+void ApplyInteractableFromEntity(GameMap& m, const MapEntity& entity, int slot) {
+  if (entity.kind != MapEntityKind::Npc && entity.kind != MapEntityKind::Prop) {
+    return;
+  }
+  if (!m.InBounds(entity.cell_x, entity.cell_y)) {
+    return;
+  }
+
+  const size_t idx = static_cast<size_t>(entity.cell_y * m.c_wid + entity.cell_x);
+  m.interactables[idx] = slot;
+
+  std::string name;
+  std::string type;
+  if (entity.kind == MapEntityKind::Npc) {
+    name = !entity.npc_id.empty() ? entity.npc_id : std::string{"Npc"};
+    type = !entity.dialog_key.empty() ? entity.dialog_key : name;
+  } else {
+    name = !entity.dialog_key.empty() ? entity.dialog_key : std::string{"Prop"};
+    type = name;
+  }
+  m.interactable_names[idx] = name;
+  m.interactable_type_ids[slot] = type;
+}
+
+void LoadEntityInstances(const json& layer, GameMap& m) {
+  if (!layer.contains("entityInstances") || !layer["entityInstances"].is_array()) {
+    return;
+  }
+
+  for (const auto& instance : layer["entityInstances"]) {
+    const std::string identifier = instance.value("__identifier", std::string{});
+    MapEntityKind kind = MapEntityKind::Prop;
+    if (!ParseEntityKind(identifier, kind)) {
+      continue;
+    }
+
+    int cx = 0;
+    int cy = 0;
+    if (!CellFromEntity(instance, m.grid_px, cx, cy)) {
+      continue;
+    }
+
+    MapEntity entity;
+    entity.kind = kind;
+    entity.cell_x = cx;
+    entity.cell_y = cy;
+    entity.iid = instance.value("iid", std::string{});
+    entity.spawn_id = FieldString(instance, "spawn_id", "SpawnId");
+    entity.target_map = FieldString(instance, "target_map", "TargetMap");
+    entity.target_spawn = FieldString(instance, "target_spawn", "TargetSpawn");
+    entity.npc_id = FieldString(instance, "npc_id", "NpcId");
+    entity.dialog_key = FieldString(instance, "dialog_key", "DialogKey");
+    m.entities.push_back(std::move(entity));
+  }
+}
+
+void LoadIntGridInteractables(const json& layer, GameMap& m, size_t expected) {
+  if (layer.contains("intGridValues") && layer["intGridValues"].is_array()) {
+    for (const auto& value_entry : layer["intGridValues"]) {
+      const int value = value_entry.value("value", 0);
+      const std::string identifier = value_entry.value("identifier", std::string{});
+      if (value != 0 && !identifier.empty() && !m.interactable_type_ids.count(value)) {
+        m.interactable_type_ids[value] = identifier;
+      }
+    }
+  }
+
+  if (!layer.contains("intGridCsv") || !layer["intGridCsv"].is_array() ||
+      layer["intGridCsv"].size() != expected) {
+    return;
+  }
+
+  std::unordered_map<std::string, int> type_counts;
+  size_t i = 0;
+  for (const auto& v : layer["intGridCsv"]) {
+    const int value = v.get<int>();
+    if (value != 0 && m.interactables[i] == 0) {
+      m.interactables[i] = value;
+      const std::string type_name = m.interactable_type_ids.count(value)
+                                        ? m.interactable_type_ids[value]
+                                        : std::string{"Unknown"};
+      const int count = ++type_counts[type_name];
+      std::ostringstream oss;
+      oss << type_name << std::setw(3) << std::setfill('0') << count;
+      m.interactable_names[i] = oss.str();
+    }
+    ++i;
+  }
+}
+
 }  // namespace
 
 // START REMOVE-ALL STUDY NOTES
@@ -41,8 +188,9 @@ bool InteractablesLayerIdentifierMatches(const std::string& id) {
 // runtime-friendly format:
 //  1. Open the JSON file and validate the top-level structure.
 //  2. Pick the requested level from the "levels" array.
-//  3. Search the layer instances for the wall grid and the interactable grid.
-//  4. Copy the intGridCsv values into the GameMap::walls and interactables arrays.
+//  3. Search the layer instances for the wall grid, entity instances, and leftover
+//     IntGrid interactables (entities win when both occupy a cell).
+//  4. Copy the intGridCsv values into GameMap::walls.
 //  5. Record metadata such as cell size, level name, and named interactable types.
 //  6. Return an empty string on success or an error string if the file is invalid.
 //
@@ -85,15 +233,20 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
 
   const json* wall_layer = nullptr;
   const json* interact_layer = nullptr;
+  const json* entities_layer = nullptr;
   for (const auto& layer : level["layerInstances"]) {
     const std::string type = layer.value("__type", std::string{});
+    const std::string lid = layer.value("__identifier", std::string{});
+    if (type == "Entities") {
+      entities_layer = &layer;
+      continue;
+    }
     if (type != "IntGrid") {
       continue;
     }
     if (!layer.contains("intGridCsv") || !layer["intGridCsv"].is_array()) {
       continue;
     }
-    const std::string lid = layer.value("__identifier", std::string{});
     if (LayerIdentifierMatches(lid)) {
       wall_layer = &layer;
     }
@@ -131,37 +284,19 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
   m.interactables.assign(expected, 0);
   m.interactable_names.assign(expected, std::string{});
   m.interactable_type_ids.clear();
+  m.entities.clear();
+
+  if (entities_layer != nullptr) {
+    LoadEntityInstances(*entities_layer, m);
+    int slot = 1;
+    for (const auto& entity : m.entities) {
+      ApplyInteractableFromEntity(m, entity, slot);
+      ++slot;
+    }
+  }
 
   if (interact_layer != nullptr) {
-    if ((*interact_layer).contains("intGridValues") && (*interact_layer)["intGridValues"].is_array()) {
-      for (const auto& value_entry : (*interact_layer)["intGridValues"]) {
-        const int value = value_entry.value("value", 0);
-        const std::string identifier = value_entry.value("identifier", std::string{});
-        if (value != 0 && !identifier.empty()) {
-          m.interactable_type_ids[value] = identifier;
-        }
-      }
-    }
-
-    const auto& interact_csv = (*interact_layer)["intGridCsv"];
-    if (interact_csv.is_array() && interact_csv.size() == expected) {
-      i = 0;
-      std::unordered_map<std::string, int> type_counts;
-      for (const auto& v : interact_csv) {
-        const int value = v.get<int>();
-        m.interactables[i] = value;
-        if (value != 0) {
-          const std::string type_name = m.interactable_type_ids.count(value)
-                                            ? m.interactable_type_ids[value]
-                                            : std::string{"Unknown"};
-          const int count = ++type_counts[type_name];
-          std::ostringstream oss;
-          oss << type_name << std::setw(3) << std::setfill('0') << count;
-          m.interactable_names[i] = oss.str();
-        }
-        ++i;
-      }
-    }
+    LoadIntGridInteractables(*interact_layer, m, expected);
   }
 
   out = std::move(m);

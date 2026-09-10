@@ -1,5 +1,7 @@
 #pragma once
 
+#include <string>
+
 #include <raylib.h>
 
 #include "game_map.hpp"
@@ -27,6 +29,7 @@ void ClampPlayerToMapBounds(Vector2& p, const GameMap& m);
 void PlayerToCell(const Vector2& p, const GameMap& m, int& ix, int& iy);
 bool IsWallAtPlayer(const Vector2& p, const GameMap& m);
 void SpawnPlayerAtFirstWalkable(const GameMap& m, Vector2& out);
+void SpawnPlayerAtSpawn(const GameMap& m, const std::string& spawn_id, Vector2& out);
 void UpdatePlayerMovement(PlayerState& player_state, const GameMap& map,
                          const Vector2& input, float dt, float camera_yaw_deg);
 

@@ -16,6 +16,11 @@ constexpr float kMoveSpeed = 5.f;
 constexpr float kMoveAccel = 16.f;
 constexpr float kSnapStrength = 18.f;
 
+void CellCenterWorld(const GameMap& m, int ix, int iy, Vector2& out) {
+  out.x = static_cast<float>(ix) + 0.5f - static_cast<float>(m.c_wid) * 0.5f;
+  out.y = static_cast<float>(iy) + 0.5f - static_cast<float>(m.c_hei) * 0.5f;
+}
+
 }  // namespace
 
 Vector2 NearestTileCenter(Vector2 p) {
@@ -67,13 +72,20 @@ void SpawnPlayerAtFirstWalkable(const GameMap& m, Vector2& out) {
   for (int iy = 0; iy < m.c_hei; ++iy) {
     for (int ix = 0; ix < m.c_wid; ++ix) {
       if (!m.IsWall(ix, iy)) {
-        out.x = static_cast<float>(ix) + 0.5f - static_cast<float>(m.c_wid) * 0.5f;
-        out.y = static_cast<float>(iy) + 0.5f - static_cast<float>(m.c_hei) * 0.5f;
+        CellCenterWorld(m, ix, iy, out);
         return;
       }
     }
   }
   out = {0.f, 0.f};
+}
+
+void SpawnPlayerAtSpawn(const GameMap& m, const std::string& spawn_id, Vector2& out) {
+  if (const MapEntity* spawn = m.FindSpawn(spawn_id)) {
+    CellCenterWorld(m, spawn->cell_x, spawn->cell_y, out);
+    return;
+  }
+  SpawnPlayerAtFirstWalkable(m, out);
 }
 
 void UpdatePlayerMovement(PlayerState& player_state, const GameMap& map,

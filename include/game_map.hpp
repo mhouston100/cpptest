@@ -4,6 +4,20 @@
 #include <unordered_map>
 #include <vector>
 
+enum class MapEntityKind { Spawn, Warp, Npc, Prop };
+
+struct MapEntity {
+  MapEntityKind kind = MapEntityKind::Prop;
+  int cell_x = 0;
+  int cell_y = 0;
+  std::string iid;
+  std::string spawn_id;
+  std::string target_map;
+  std::string target_spawn;
+  std::string npc_id;
+  std::string dialog_key;
+};
+
 // One LDtk level instance: IntGrid wall mask (row-major, LDtk Y down = iy increases downward in file).
 struct GameMap {
   int c_wid = 0;
@@ -12,6 +26,7 @@ struct GameMap {
   std::string level_identifier;
   std::string source_path;
   std::vector<int> walls;
+  std::vector<MapEntity> entities;
 
   [[nodiscard]] bool InBounds(int ix, int iy) const noexcept {
     return ix >= 0 && iy >= 0 && ix < c_wid && iy < c_hei;
@@ -44,6 +59,22 @@ struct GameMap {
 
   [[nodiscard]] bool IsWall(int ix, int iy) const noexcept {
     return InBounds(ix, iy) && Cell(ix, iy) != 0;
+  }
+
+  [[nodiscard]] const MapEntity* FindSpawn(const std::string& spawn_id) const {
+    const MapEntity* fallback = nullptr;
+    for (const auto& entity : entities) {
+      if (entity.kind != MapEntityKind::Spawn) {
+        continue;
+      }
+      if (fallback == nullptr) {
+        fallback = &entity;
+      }
+      if (!spawn_id.empty() && entity.spawn_id == spawn_id) {
+        return &entity;
+      }
+    }
+    return fallback;
   }
 
   std::vector<int> interactables;

@@ -129,23 +129,38 @@ void DrawWallCells(const GameMap& m) {
   }
 }
 
-void DrawInteractables(const GameMap& m) {
+static void DrawEntityMarker(const GameMap& m, int ix, int iy, float size, const Color fill,
+                             const Color outline) {
   const float tw = g_tileWorld;
   const float hx = static_cast<float>(m.c_wid) * 0.5f;
   const float hz = static_cast<float>(m.c_hei) * 0.5f;
+  const float wx = (static_cast<float>(ix) + 0.5f - hx) * tw;
+  const float wz = (static_cast<float>(iy) + 0.5f - hz) * tw;
+  const Vector3 c{wx, size * 0.5f + 0.01f, wz};
+  DrawCube(c, size, size, size, fill);
+  DrawCubeWires(c, size, size, size, outline);
+}
+
+void DrawInteractables(const GameMap& m) {
+  const float tw = g_tileWorld;
   const float item_size = tw * 0.6f;
-  const Color fill{244, 58, 58, 255};
-  const Color outline{180, 40, 40, 255};
   for (int iy = 0; iy < m.c_hei; ++iy) {
     for (int ix = 0; ix < m.c_wid; ++ix) {
       if (!m.HasInteractable(ix, iy)) {
         continue;
       }
-      const float ixw = (static_cast<float>(ix) + 0.5f - hx) * tw;
-      const float iz = (static_cast<float>(iy) + 0.5f - hz) * tw;
-      const Vector3 c{ixw, item_size * 0.5f + 0.01f, iz};
-      DrawCube(c, item_size, item_size, item_size, fill);
-      DrawCubeWires(c, item_size, item_size, item_size, outline);
+      DrawEntityMarker(m, ix, iy, item_size, Color{244, 58, 58, 255}, Color{180, 40, 40, 255});
+    }
+  }
+
+  const float marker_size = tw * 0.45f;
+  for (const auto& entity : m.entities) {
+    if (entity.kind == MapEntityKind::Spawn) {
+      DrawEntityMarker(m, entity.cell_x, entity.cell_y, marker_size, Color{74, 222, 128, 255},
+                       Color{22, 101, 52, 255});
+    } else if (entity.kind == MapEntityKind::Warp) {
+      DrawEntityMarker(m, entity.cell_x, entity.cell_y, marker_size, Color{56, 189, 248, 255},
+                       Color{12, 74, 110, 255});
     }
   }
 }
