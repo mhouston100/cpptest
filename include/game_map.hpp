@@ -1,7 +1,8 @@
 #pragma once
 
+#include <algorithm>
+#include <cmath>
 #include <string>
-#include <unordered_map>
 #include <vector>
 
 enum class MapEntityKind { Spawn, Warp, Npc, Prop };
@@ -17,6 +18,20 @@ struct MapEntity {
   std::string npc_id;
   std::string dialog_key;
 };
+
+[[nodiscard]] inline bool IsTalkable(const MapEntityKind kind) noexcept {
+  return kind == MapEntityKind::Npc || kind == MapEntityKind::Prop;
+}
+
+inline void TalkIdentity(const MapEntity& entity, std::string& name, std::string& type) {
+  if (entity.kind == MapEntityKind::Npc) {
+    name = !entity.npc_id.empty() ? entity.npc_id : std::string{"Npc"};
+    type = !entity.dialog_key.empty() ? entity.dialog_key : name;
+    return;
+  }
+  name = !entity.dialog_key.empty() ? entity.dialog_key : std::string{"Prop"};
+  type = name;
+}
 
 // One LDtk level instance: IntGrid wall mask (row-major, LDtk Y down = iy increases downward in file).
 struct GameMap {
@@ -36,29 +51,37 @@ struct GameMap {
     return walls[static_cast<size_t>(iy * c_wid + ix)];
   }
 
-  [[nodiscard]] int Interactable(int ix, int iy) const noexcept {
-    return InBounds(ix, iy) ? interactables[static_cast<size_t>(iy * c_wid + ix)] : 0;
-  }
-
-  [[nodiscard]] std::string InteractableType(int ix, int iy) const noexcept {
-    const int value = Interactable(ix, iy);
-    if (value == 0) {
-      return {};
-    }
-    const auto it = interactable_type_ids.find(value);
-    return it != interactable_type_ids.end() ? it->second : std::string{};
-  }
-
-  [[nodiscard]] std::string InteractableName(int ix, int iy) const noexcept {
-    return InBounds(ix, iy) ? interactable_names[static_cast<size_t>(iy * c_wid + ix)] : std::string{};
-  }
-
-  [[nodiscard]] bool HasInteractable(int ix, int iy) const noexcept {
-    return Interactable(ix, iy) != 0;
-  }
-
   [[nodiscard]] bool IsWall(int ix, int iy) const noexcept {
     return InBounds(ix, iy) && Cell(ix, iy) != 0;
+  }
+
+  void WorldToCell(float wx, float wy, int& ix, int& iy) const {
+    ix = static_cast<int>(std::floor(wx + static_cast<float>(c_wid) * 0.5f - 0.5f + 1e-4f));
+    iy = static_cast<int>(std::floor(wy + static_cast<float>(c_hei) * 0.5f - 0.5f + 1e-4f));
+    if (c_wid > 0) {
+      ix = std::clamp(ix, 0, c_wid - 1);
+    }
+    if (c_hei > 0) {
+      iy = std::clamp(iy, 0, c_hei - 1);
+    }
+  }
+
+  [[nodiscard]] const MapEntity* FindAt(int ix, int iy) const {
+    for (const auto& entity : entities) {
+      if (entity.cell_x == ix && entity.cell_y == iy) {
+        return &entity;
+      }
+    }
+    return nullptr;
+  }
+
+  [[nodiscard]] const MapEntity* FindAt(int ix, int iy, MapEntityKind kind) const {
+    for (const auto& entity : entities) {
+      if (entity.kind == kind && entity.cell_x == ix && entity.cell_y == iy) {
+        return &entity;
+      }
+    }
+    return nullptr;
   }
 
   [[nodiscard]] const MapEntity* FindSpawn(const std::string& spawn_id) const {
@@ -76,8 +99,4 @@ struct GameMap {
     }
     return fallback;
   }
-
-  std::vector<int> interactables;
-  std::vector<std::string> interactable_names;
-  std::unordered_map<int, std::string> interactable_type_ids;
 };

@@ -1,0 +1,7 @@
+{
+  "start": "office",
+  "maps": [
+    { "id": "office", "path": "map/cpptest.ldtk", "level_index": 0 },
+    { "id": "floor_1", "path": "map/floor_1.ldtk", "level_index": 0 }
+  ]
+}

@@ -25,5 +25,5 @@ void DrawGroundWithMapEdge(const GroundDrawResources& res, const GameMap& m,
                           const float tile_world);
 void DrawWorldGridForMap(const GameMap& m, const Color line_color);
 void DrawWallCells(const GameMap& m);
-void DrawInteractables(const GameMap& m);
+void DrawMapEntities(const GameMap& m);
 void DrawPlayerBlock(const Vector3& base_center, const Color fill, const Color outline);

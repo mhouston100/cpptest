@@ -29,6 +29,7 @@ FetchContent_MakeAvailable(json)
 add_executable(cpptest
   src/main.cpp
   src/ldtk_load.cpp
+  src/map_catalog.cpp
   src/player.cpp
   src/camera.cpp
   src/dialog.cpp

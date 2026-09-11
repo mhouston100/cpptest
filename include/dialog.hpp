@@ -40,5 +40,5 @@ DialogTree MakeFallbackDialogTree(const std::string& instance_name,
 DialogTree MakeDialogTreeForInstance(const std::string& instance_name,
                                      const std::string& type_name,
                                      const std::unordered_map<std::string, DialogTree>& registry);
-bool GetAdjacentInteractable(const Vector2& player, const GameMap& m, int& out_item,
-                             std::string& out_name, std::string& out_type);
+bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
+                         std::string& out_type);

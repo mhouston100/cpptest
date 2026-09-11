@@ -36,10 +36,7 @@ void ClampPlayerToMapBounds(Vector2& p, const GameMap& m) {
 }
 
 void PlayerToCell(const Vector2& p, const GameMap& m, int& ix, int& iy) {
-  ix = static_cast<int>(std::floor(p.x + static_cast<float>(m.c_wid) * 0.5f - 0.5f + 1e-4f));
-  iy = static_cast<int>(std::floor(p.y + static_cast<float>(m.c_hei) * 0.5f - 0.5f + 1e-4f));
-  ix = std::clamp(ix, 0, m.c_wid - 1);
-  iy = std::clamp(iy, 0, m.c_hei - 1);
+  m.WorldToCell(p.x, p.y, ix, iy);
 }
 
 bool IsWallAtPlayer(const Vector2& p, const GameMap& m) {

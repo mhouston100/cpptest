@@ -11,6 +11,7 @@
 #include "game.hpp"
 #include "game_map.hpp"
 #include "ldtk_load.hpp"
+#include "map_catalog.hpp"
 #include "options.hpp"
 #include "player.hpp"
 #include "render.hpp"
@@ -26,16 +27,6 @@
 namespace {
 
 constexpr float kCamZoomSmooth = 20.f;
-
-struct MapCatalogEntry {
-  const char* path;
-  int level_index = 0;
-};
-
-constexpr MapCatalogEntry kMapCatalog[] = {
-    {"map/cpptest.ldtk", 0},
-    {"map/floor_1.ldtk", 0},
-};
 
 enum class MapFade { Idle, Out, In };
 enum class PausePage { Root, Options };
@@ -94,8 +85,22 @@ int main() {
   // Load the initial level before the gameplay loop starts so the camera and player
   // begin in a valid world state instead of a blank or uninitialized map.
   // END REMOVE-ALL STUDY NOTES
+  MapCatalog catalog;
+  std::string catalog_err = LoadMapCatalog("map/catalog.json", catalog);
+  if (!catalog_err.empty()) {
+    TraceLog(LOG_ERROR, "Map catalog: %s", catalog_err.c_str());
+  }
+
   GameMap map;
-  std::string load_err = LoadLdtkLevel(kMapCatalog[0].path, kMapCatalog[0].level_index, map);
+  std::string current_map_id;
+  std::string load_err = catalog_err;
+  const MapCatalogEntry* start_map = CatalogStart(catalog);
+  if (load_err.empty() && start_map != nullptr) {
+    load_err = LoadLdtkLevel(start_map->path, start_map->level_index, map);
+    if (load_err.empty()) {
+      current_map_id = start_map->id;
+    }
+  }
   if (!load_err.empty()) {
     TraceLog(LOG_ERROR, "Map load: %s", load_err.c_str());
   }
@@ -105,10 +110,11 @@ int main() {
     SpawnPlayerAtSpawn(map, "start", player_state.position);
   }
 
-  int map_index = 0;
   MapFade map_fade = MapFade::Idle;
   float map_fade_t = 0.f;
-  int pending_map_index = -1;
+  const MapCatalogEntry* pending_map = nullptr;
+  std::string pending_spawn = "start";
+  bool warp_armed = true;
   constexpr float k_map_fade_sec = 0.42f;
 
   int cam_zoom_target = 1;
@@ -153,18 +159,16 @@ int main() {
     // Map transitions happen as a fade rather than a hard reset so the level swap
     // feels smoother and avoids the player noticing the world being reloaded.
     // END REMOVE-ALL STUDY NOTES
-    if (IsKeyPressed(KEY_F1)) {
-      if (mode == GameMode::Playing) {
-        const int n = static_cast<int>(std::size(kMapCatalog));
-        pending_map_index = (map_index - 1 + n) % n;
-        map_fade = MapFade::Out;
-        map_fade_t = 0.f;
-      }
-    }
-    if (IsKeyPressed(KEY_F2)) {
-      if (mode == GameMode::Playing) {
-        const int n = static_cast<int>(std::size(kMapCatalog));
-        pending_map_index = (map_index + 1) % n;
+    if (IsKeyPressed(KEY_F1) || IsKeyPressed(KEY_F2)) {
+      if (mode == GameMode::Playing && !catalog.maps.empty()) {
+        const int n = static_cast<int>(catalog.maps.size());
+        int index = CatalogIndexOf(catalog, current_map_id);
+        if (index < 0) {
+          index = 0;
+        }
+        index = (index + (IsKeyPressed(KEY_F2) ? 1 : n - 1)) % n;
+        pending_map = &catalog.maps[static_cast<size_t>(index)];
+        pending_spawn = "start";
         map_fade = MapFade::Out;
         map_fade_t = 0.f;
       }
@@ -173,13 +177,19 @@ int main() {
     if (map_fade == MapFade::Out) {
       map_fade_t += dt;
       if (map_fade_t >= k_map_fade_sec) {
-        load_err = LoadLdtkLevel(kMapCatalog[pending_map_index].path,
-                                 kMapCatalog[pending_map_index].level_index, map);
-        if (!load_err.empty()) {
+        if (pending_map == nullptr) {
+          load_err = "Warp target is missing from the map catalog";
           TraceLog(LOG_ERROR, "Map load: %s", load_err.c_str());
         } else {
-          map_index = pending_map_index;
-          SpawnPlayerAtSpawn(map, "start", player_state.position);
+          load_err = LoadLdtkLevel(pending_map->path, pending_map->level_index, map);
+          if (!load_err.empty()) {
+            TraceLog(LOG_ERROR, "Map load: %s", load_err.c_str());
+          } else {
+            current_map_id = pending_map->id;
+            SpawnPlayerAtSpawn(map, pending_spawn, player_state.position);
+            player_state.velocity = {0.f, 0.f};
+            warp_armed = false;
+          }
         }
         map_fade = MapFade::In;
         map_fade_t = 0.f;
@@ -188,7 +198,7 @@ int main() {
       map_fade_t += dt;
       if (map_fade_t >= k_map_fade_sec) {
         map_fade = MapFade::Idle;
-        pending_map_index = -1;
+        pending_map = nullptr;
       }
     }
 
@@ -244,11 +254,30 @@ int main() {
       // END REMOVE-ALL STUDY NOTES
       UpdatePlayerMovement(player_state, map, input, dt, g_camYawDeg);
 
-      int adjacent_item = 0;
+      int cell_x = 0;
+      int cell_y = 0;
+      PlayerToCell(player_state.position, map, cell_x, cell_y);
+      const MapEntity* warp = map.FindAt(cell_x, cell_y, MapEntityKind::Warp);
+      if (warp == nullptr) {
+        warp_armed = true;
+      } else if (warp_armed) {
+        const MapCatalogEntry* dest = FindCatalogMap(catalog, warp->target_map);
+        if (dest == nullptr) {
+          TraceLog(LOG_WARNING, "Warp target not in catalog: %s", warp->target_map.c_str());
+          warp_armed = false;
+        } else {
+          pending_map = dest;
+          pending_spawn = warp->target_spawn.empty() ? "start" : warp->target_spawn;
+          map_fade = MapFade::Out;
+          map_fade_t = 0.f;
+          warp_armed = false;
+        }
+      }
+
       std::string adjacent_name;
       std::string adjacent_type;
-      has_adjacent_interactable = GetAdjacentInteractable(player_state.position, map, adjacent_item,
-                                                        adjacent_name, adjacent_type);
+      has_adjacent_interactable = GetAdjacentTalkable(player_state.position, map, adjacent_name,
+                                                      adjacent_type);
       if (IsKeyPressed(KEY_E) && has_adjacent_interactable) {
         interaction_dialog = true;
         active_interactable_name = adjacent_name;
@@ -293,7 +322,7 @@ int main() {
       DrawGroundWithMapEdge(ground, map, g_tileWorld);
       DrawWorldGridForMap(map, Color{72, 86, 104, 255});
       DrawWallCells(map);
-      DrawInteractables(map);
+      DrawMapEntities(map);
     }
 
     const Vector3 feet = TileToWorldCenter(player_state.position.x, player_state.position.y);
@@ -319,12 +348,13 @@ int main() {
     const float pad = 12.f;
     const float body = kUiTheme.type_body;
     const float line = 24.f;
-    DrawLabel(ui, pad, pad, "WASD move   F1/F2 prev/next map (fade)   [ / ] tile size   - / + zoom",
+    DrawLabel(ui, pad, pad, "WASD move   walk onto blue to travel   F1/F2 debug map   [ / ] tile size",
               body, RAYWHITE);
+    const int map_index = CatalogIndexOf(catalog, current_map_id);
     DrawLabel(ui, pad, pad + line,
-              TextFormat("Map %d/%d  %s  level:%s", map_index + 1,
-                         static_cast<int>(std::size(kMapCatalog)), kMapCatalog[map_index].path,
-                         map.level_identifier.c_str()),
+              TextFormat("Map %d/%d  %s  %s  level:%s", map_index + 1,
+                         static_cast<int>(catalog.maps.size()), current_map_id.c_str(),
+                         map.source_path.c_str(), map.level_identifier.c_str()),
               body, Color{200, 200, 200, 255});
     if (!load_err.empty()) {
       DrawLabel(ui, pad, pad + line * 2, load_err.c_str(), body, Color{255, 120, 120, 255});

@@ -631,13 +631,13 @@
 								{
 									"__identifier": "TargetMap",
 									"__type": "String",
-									"__value": "map/cpptest.ldtk",
+									"__value": "office",
 									"defUid": 9,
 									"realEditorValues": [
 										{
 											"id": "V_String",
 											"params": [
-												"map/cpptest.ldtk"
+												"office"
 											]
 										}
 									]

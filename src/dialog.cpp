@@ -173,39 +173,22 @@ DialogTree MakeDialogTreeForInstance(const std::string& instance_name, const std
   return dialog;
 }
 
-bool GetAdjacentInteractable(const Vector2& player, const GameMap& m, int& out_item,
-                            std::string& out_name, std::string& out_type) {
+bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
+                         std::string& out_type) {
   int cx = 0;
   int cy = 0;
-  int tx = 0;
-  int ty = 0;
-  bool found = false;
+  m.WorldToCell(player.x, player.y, cx, cy);
 
-  // Reuse the player's cell conversion to determine the current tile underfoot.
-  // Then look one tile in each of the four cardinal directions for an interactable.
   constexpr int kDirs[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
-  cx = static_cast<int>(std::floor(player.x + static_cast<float>(m.c_wid) * 0.5f - 0.5f + 1e-4f));
-  cy = static_cast<int>(std::floor(player.y + static_cast<float>(m.c_hei) * 0.5f - 0.5f + 1e-4f));
-  cx = std::clamp(cx, 0, m.c_wid - 1);
-  cy = std::clamp(cy, 0, m.c_hei - 1);
-
   for (const auto& d : kDirs) {
     const int nx = cx + d[0];
     const int ny = cy + d[1];
-    if (m.InBounds(nx, ny) && m.HasInteractable(nx, ny)) {
-      tx = nx;
-      ty = ny;
-      found = true;
-      break;
+    const MapEntity* entity = m.FindAt(nx, ny);
+    if (entity == nullptr || !IsTalkable(entity->kind)) {
+      continue;
     }
+    TalkIdentity(*entity, out_name, out_type);
+    return true;
   }
-
-  if (!found) {
-    return false;
-  }
-
-  out_item = m.Interactable(tx, ty);
-  out_name = m.InteractableName(tx, ty);
-  out_type = m.InteractableType(tx, ty);
-  return true;
+  return false;
 }

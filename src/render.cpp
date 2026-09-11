@@ -141,21 +141,15 @@ static void DrawEntityMarker(const GameMap& m, int ix, int iy, float size, const
   DrawCubeWires(c, size, size, size, outline);
 }
 
-void DrawInteractables(const GameMap& m) {
+void DrawMapEntities(const GameMap& m) {
   const float tw = g_tileWorld;
-  const float item_size = tw * 0.6f;
-  for (int iy = 0; iy < m.c_hei; ++iy) {
-    for (int ix = 0; ix < m.c_wid; ++ix) {
-      if (!m.HasInteractable(ix, iy)) {
-        continue;
-      }
-      DrawEntityMarker(m, ix, iy, item_size, Color{244, 58, 58, 255}, Color{180, 40, 40, 255});
-    }
-  }
-
+  const float talk_size = tw * 0.6f;
   const float marker_size = tw * 0.45f;
   for (const auto& entity : m.entities) {
-    if (entity.kind == MapEntityKind::Spawn) {
+    if (entity.kind == MapEntityKind::Npc || entity.kind == MapEntityKind::Prop) {
+      DrawEntityMarker(m, entity.cell_x, entity.cell_y, talk_size, Color{244, 58, 58, 255},
+                       Color{180, 40, 40, 255});
+    } else if (entity.kind == MapEntityKind::Spawn) {
       DrawEntityMarker(m, entity.cell_x, entity.cell_y, marker_size, Color{74, 222, 128, 255},
                        Color{22, 101, 52, 255});
     } else if (entity.kind == MapEntityKind::Warp) {

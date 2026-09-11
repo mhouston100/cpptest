@@ -1,7 +1,6 @@
 #include "ldtk_load.hpp"
 
 #include <fstream>
-#include <iomanip>
 #include <sstream>
 #include <string>
 
@@ -26,13 +25,6 @@ bool LayerIdentifierMatches(const std::string& id) {
     return true;
   }
   return false;
-}
-
-bool InteractablesLayerIdentifierMatches(const std::string& id) {
-  if (id.empty()) {
-    return false;
-  }
-  return id == "Interactables" || id == "interactables";
 }
 
 bool FieldIdentifierMatches(const std::string& id, const char* snake, const char* pascal) {
@@ -91,30 +83,6 @@ bool CellFromEntity(const json& entity, int grid_px, int& cx, int& cy) {
   return false;
 }
 
-void ApplyInteractableFromEntity(GameMap& m, const MapEntity& entity, int slot) {
-  if (entity.kind != MapEntityKind::Npc && entity.kind != MapEntityKind::Prop) {
-    return;
-  }
-  if (!m.InBounds(entity.cell_x, entity.cell_y)) {
-    return;
-  }
-
-  const size_t idx = static_cast<size_t>(entity.cell_y * m.c_wid + entity.cell_x);
-  m.interactables[idx] = slot;
-
-  std::string name;
-  std::string type;
-  if (entity.kind == MapEntityKind::Npc) {
-    name = !entity.npc_id.empty() ? entity.npc_id : std::string{"Npc"};
-    type = !entity.dialog_key.empty() ? entity.dialog_key : name;
-  } else {
-    name = !entity.dialog_key.empty() ? entity.dialog_key : std::string{"Prop"};
-    type = name;
-  }
-  m.interactable_names[idx] = name;
-  m.interactable_type_ids[slot] = type;
-}
-
 void LoadEntityInstances(const json& layer, GameMap& m) {
   if (!layer.contains("entityInstances") || !layer["entityInstances"].is_array()) {
     return;
@@ -147,56 +115,17 @@ void LoadEntityInstances(const json& layer, GameMap& m) {
   }
 }
 
-void LoadIntGridInteractables(const json& layer, GameMap& m, size_t expected) {
-  if (layer.contains("intGridValues") && layer["intGridValues"].is_array()) {
-    for (const auto& value_entry : layer["intGridValues"]) {
-      const int value = value_entry.value("value", 0);
-      const std::string identifier = value_entry.value("identifier", std::string{});
-      if (value != 0 && !identifier.empty() && !m.interactable_type_ids.count(value)) {
-        m.interactable_type_ids[value] = identifier;
-      }
-    }
-  }
-
-  if (!layer.contains("intGridCsv") || !layer["intGridCsv"].is_array() ||
-      layer["intGridCsv"].size() != expected) {
-    return;
-  }
-
-  std::unordered_map<std::string, int> type_counts;
-  size_t i = 0;
-  for (const auto& v : layer["intGridCsv"]) {
-    const int value = v.get<int>();
-    if (value != 0 && m.interactables[i] == 0) {
-      m.interactables[i] = value;
-      const std::string type_name = m.interactable_type_ids.count(value)
-                                        ? m.interactable_type_ids[value]
-                                        : std::string{"Unknown"};
-      const int count = ++type_counts[type_name];
-      std::ostringstream oss;
-      oss << type_name << std::setw(3) << std::setfill('0') << count;
-      m.interactable_names[i] = oss.str();
-    }
-    ++i;
-  }
-}
-
 }  // namespace
 
 // START REMOVE-ALL STUDY NOTES
-// LoadLdtkLevel does the heavy lifting of translating an LDtk export into a
-// runtime-friendly format:
-//  1. Open the JSON file and validate the top-level structure.
-//  2. Pick the requested level from the "levels" array.
-//  3. Search the layer instances for the wall grid, entity instances, and leftover
-//     IntGrid interactables (entities win when both occupy a cell).
-//  4. Copy the intGridCsv values into GameMap::walls.
-//  5. Record metadata such as cell size, level name, and named interactable types.
-//  6. Return an empty string on success or an error string if the file is invalid.
+// LoadLdtkLevel translates one LDtk level into GameMap:
+//  1. Open the JSON file and pick the requested level.
+//  2. Copy the Walls IntGrid into GameMap::walls (collision only).
+//  3. Copy Entities-layer instances into GameMap::entities (spawn, warp, talk).
+//  4. Return an empty string on success or an error string if the file is invalid.
 //
-// This separation is useful because the rest of the game does not need to know
-// about the raw LDtk schema; it only needs functions such as IsWall(), InBounds(),
-// and HasInteractable() from GameMap.
+// IntGrid is not used for people, props, or doors. Those are entity instances with
+// fields. The rest of the game asks GameMap for IsWall() or FindAt(), not raw LDtk.
 // END REMOVE-ALL STUDY NOTES
 std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMap& out) {
   GameMap m{};
@@ -232,7 +161,6 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
   }
 
   const json* wall_layer = nullptr;
-  const json* interact_layer = nullptr;
   const json* entities_layer = nullptr;
   for (const auto& layer : level["layerInstances"]) {
     const std::string type = layer.value("__type", std::string{});
@@ -249,9 +177,6 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
     }
     if (LayerIdentifierMatches(lid)) {
       wall_layer = &layer;
-    }
-    if (InteractablesLayerIdentifierMatches(lid)) {
-      interact_layer = &layer;
     }
   }
   if (wall_layer == nullptr) {
@@ -281,22 +206,8 @@ std::string LoadLdtkLevel(const std::string& path, const int level_index, GameMa
     m.walls[i++] = v.get<int>();
   }
 
-  m.interactables.assign(expected, 0);
-  m.interactable_names.assign(expected, std::string{});
-  m.interactable_type_ids.clear();
-  m.entities.clear();
-
   if (entities_layer != nullptr) {
     LoadEntityInstances(*entities_layer, m);
-    int slot = 1;
-    for (const auto& entity : m.entities) {
-      ApplyInteractableFromEntity(m, entity, slot);
-      ++slot;
-    }
-  }
-
-  if (interact_layer != nullptr) {
-    LoadIntGridInteractables(*interact_layer, m, expected);
   }
 
   out = std::move(m);
