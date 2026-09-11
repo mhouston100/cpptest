@@ -42,3 +42,4 @@ DialogTree MakeDialogTreeForInstance(const std::string& instance_name,
                                      const std::unordered_map<std::string, DialogTree>& registry);
 bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
                          std::string& out_type);
+const MapEntity* FindAdjacentTalkable(const Vector2& player, const GameMap& m);

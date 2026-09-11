@@ -30,6 +30,7 @@ add_executable(cpptest
   src/main.cpp
   src/ldtk_load.cpp
   src/map_catalog.cpp
+  src/npc.cpp
   src/player.cpp
   src/camera.cpp
   src/dialog.cpp
@@ -47,4 +48,6 @@ add_custom_command(
           "$<TARGET_FILE_DIR:cpptest>/map"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/dialogs"
           "$<TARGET_FILE_DIR:cpptest>/dialogs"
-  COMMENT "Copy LDtk maps and dialog JSON next to executable")
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/npcs"
+          "$<TARGET_FILE_DIR:cpptest>/npcs"
+  COMMENT "Copy LDtk maps, dialog JSON, and NPC registry next to executable")

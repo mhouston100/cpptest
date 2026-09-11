@@ -173,8 +173,7 @@ DialogTree MakeDialogTreeForInstance(const std::string& instance_name, const std
   return dialog;
 }
 
-bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
-                         std::string& out_type) {
+const MapEntity* FindAdjacentTalkable(const Vector2& player, const GameMap& m) {
   int cx = 0;
   int cy = 0;
   m.WorldToCell(player.x, player.y, cx, cy);
@@ -184,11 +183,19 @@ bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& o
     const int nx = cx + d[0];
     const int ny = cy + d[1];
     const MapEntity* entity = m.FindAt(nx, ny);
-    if (entity == nullptr || !IsTalkable(entity->kind)) {
-      continue;
+    if (entity != nullptr && IsTalkable(entity->kind)) {
+      return entity;
     }
-    TalkIdentity(*entity, out_name, out_type);
-    return true;
   }
-  return false;
+  return nullptr;
+}
+
+bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
+                         std::string& out_type) {
+  const MapEntity* entity = FindAdjacentTalkable(player, m);
+  if (entity == nullptr) {
+    return false;
+  }
+  TalkIdentity(*entity, out_name, out_type);
+  return true;
 }

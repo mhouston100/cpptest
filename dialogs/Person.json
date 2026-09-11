@@ -1,7 +1,7 @@
 {
   "default": {
     "steps": [
-      { "text": "${instance}: Hi there, traveler. The city needs your help." },
+      { "text": "${name}: Hi there, traveler. The city needs your help." },
       {
         "text": "Will you accept the quest?",
         "choices": [
@@ -15,7 +15,7 @@
   },
   "Person001": {
     "steps": [
-      { "text": "Person001: Oh, it's you again! Did you bring the items?" },
+      { "text": "${name}: Oh, it's you again! Did you bring the items?" },
       {
         "text": "Do you have the items?",
         "choices": [

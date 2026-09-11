@@ -12,6 +12,7 @@
 #include "game_map.hpp"
 #include "ldtk_load.hpp"
 #include "map_catalog.hpp"
+#include "npc.hpp"
 #include "options.hpp"
 #include "player.hpp"
 #include "render.hpp"
@@ -119,6 +120,14 @@ int main() {
 
   int cam_zoom_target = 1;
   const auto dialog_registry = LoadDialogRegistry("dialogs");
+  NpcRegistry npc_registry;
+  const std::string npc_err = LoadNpcRegistry("npcs/registry.json", npc_registry);
+  if (!npc_err.empty()) {
+    TraceLog(LOG_WARNING, "NPC registry: %s", npc_err.c_str());
+  }
+  PlayerSave player_save = LoadPlayerSave();
+  HydrateNpcSave(player_save, npc_registry);
+  SavePlayerSave(player_save);
 
   Camera3D camera{};
   camera.fovy = 50.f;
@@ -126,8 +135,8 @@ int main() {
 
   bool interaction_dialog = false;
   bool has_adjacent_interactable = false;
-  std::string active_interactable_name;
-  std::string active_interactable_type;
+  TalkTarget adjacent_talk{};
+  TalkTarget active_talk{};
   DialogTree active_dialog;
   bool in_menu = false;
   PausePage pause_page = PausePage::Root;
@@ -274,15 +283,17 @@ int main() {
         }
       }
 
-      std::string adjacent_name;
-      std::string adjacent_type;
-      has_adjacent_interactable = GetAdjacentTalkable(player_state.position, map, adjacent_name,
-                                                      adjacent_type);
+      const MapEntity* talk_entity = FindAdjacentTalkable(player_state.position, map);
+      has_adjacent_interactable = talk_entity != nullptr;
+      if (talk_entity != nullptr) {
+        adjacent_talk = ResolveTalkTarget(*talk_entity, npc_registry, player_save);
+      } else {
+        adjacent_talk = {};
+      }
       if (IsKeyPressed(KEY_E) && has_adjacent_interactable) {
         interaction_dialog = true;
-        active_interactable_name = adjacent_name;
-        active_interactable_type = adjacent_type;
-        active_dialog = MakeDialogTreeForInstance(active_interactable_name, active_interactable_type,
+        active_talk = adjacent_talk;
+        active_dialog = MakeDialogTreeForInstance(active_talk.display_name, active_talk.dialog_key,
                                                  dialog_registry);
         active_dialog.current_step = 0;
       }
@@ -407,8 +418,16 @@ int main() {
         interaction_dialog = false;
       }
     } else if (mode == GameMode::Playing && has_adjacent_interactable) {
-      DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad, "Press E to interact", body,
-                Color{220, 220, 120, 255});
+      if (adjacent_talk.kind == MapEntityKind::Npc) {
+        DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad,
+                  TextFormat("Press E to talk to %s  ·  rel %d", adjacent_talk.display_name.c_str(),
+                             adjacent_talk.relationship),
+                  body, Color{220, 220, 120, 255});
+      } else {
+        DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad,
+                  TextFormat("Press E to inspect %s", adjacent_talk.display_name.c_str()), body,
+                  Color{220, 220, 120, 255});
+      }
     } else if (mode == GameMode::Menu) {
       DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
       const float title = kUiTheme.type_title;

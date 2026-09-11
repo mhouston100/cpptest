@@ -1,0 +1,10 @@
+{
+  "npcs": [
+    {
+      "id": "Person001",
+      "display_name": "Alex",
+      "dialog_key": "Person001",
+      "relationship": 50
+    }
+  ]
+}
