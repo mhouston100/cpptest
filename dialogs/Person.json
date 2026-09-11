@@ -15,16 +15,75 @@
   },
   "Person001": {
     "steps": [
-      { "text": "${name}: Oh, it's you again! Did you bring the items?" },
       {
-        "text": "Do you have the items?",
+        "id": "first_hello",
+        "text": "${name}: Hi — I'm new on this floor. Think you can help with a ticket backlog?",
+        "cond": { "flag": "met_alex", "equals": false },
+        "effects": [{ "set_flag": "met_alex", "value": true }],
         "choices": [
-          { "label": "Yes", "next_step": 2 },
-          { "label": "No", "next_step": 3 }
+          {
+            "label": "I'll help",
+            "next_step": "accepted",
+            "effects": [
+              { "relationship": 10 },
+              { "set_flag": "quest_alex", "value": true }
+            ]
+          },
+          {
+            "label": "Not now",
+            "next_step": "declined",
+            "effects": [{ "relationship": -5 }]
+          }
         ]
       },
-      { "text": "Thank you! Here's your reward." },
-      { "text": "Please return when you have them." }
+      {
+        "id": "repeat",
+        "text": "${name}: Hey again. (rel ${relationship})",
+        "cond": { "flag": "met_alex" },
+        "choices": [
+          {
+            "label": "About that backlog",
+            "next_step": "quest_status",
+            "cond": { "flag": "quest_alex" }
+          },
+          {
+            "label": "Ask a favour",
+            "next_step": "favour",
+            "cond": { "relationship_min": 60 },
+            "effects": [{ "relationship": 4 }]
+          },
+          {
+            "label": "Just saying hi",
+            "next_step": "smalltalk",
+            "effects": [{ "relationship": 2 }]
+          }
+        ]
+      },
+      {
+        "id": "accepted",
+        "entry": false,
+        "text": "Alex grins. Ticket queue's all yours — thanks."
+      },
+      {
+        "id": "declined",
+        "entry": false,
+        "text": "No rush. The printer can wait... probably."
+      },
+      {
+        "id": "quest_status",
+        "entry": false,
+        "text": "The backlog is still ugly, but at least someone cares."
+      },
+      {
+        "id": "favour",
+        "entry": false,
+        "text": "Alex lowers their voice: 'If you ever need a badge swipe, I owe you.'"
+      },
+      {
+        "id": "smalltalk",
+        "entry": false,
+        "text": "You swap a couple of helpdesk war stories."
+      }
     ]
   }
 }

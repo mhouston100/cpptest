@@ -2,6 +2,7 @@
 
 #include <filesystem>
 #include <fstream>
+#include <sstream>
 
 // START REMOVE-ALL STUDY NOTES
 // This module owns the dialog content pipeline. It reads JSON definitions, keeps a
@@ -10,6 +11,68 @@
 // END REMOVE-ALL STUDY NOTES
 
 using nlohmann::json;
+using cpptest::GetFlag;
+using cpptest::GetRelationship;
+using cpptest::PlayerSave;
+using cpptest::SetFlag;
+using cpptest::AddRelationship;
+using cpptest::TalkTarget;
+
+namespace {
+
+DialogCondition ParseCondition(const json& node) {
+  DialogCondition cond;
+  if (!node.is_object()) {
+    return cond;
+  }
+  cond.flag = node.value("flag", std::string{});
+  if (node.contains("equals") && node["equals"].is_boolean()) {
+    cond.flag_equals = node["equals"].get<bool>();
+  }
+  if (node.contains("relationship_min") && node["relationship_min"].is_number_integer()) {
+    cond.relationship_min = node["relationship_min"].get<int>();
+  }
+  if (node.contains("relationship_max") && node["relationship_max"].is_number_integer()) {
+    cond.relationship_max = node["relationship_max"].get<int>();
+  }
+  return cond;
+}
+
+std::vector<DialogEffect> ParseEffects(const json& node) {
+  std::vector<DialogEffect> effects;
+  if (!node.is_array()) {
+    return effects;
+  }
+  for (const auto& item : node) {
+    if (!item.is_object()) {
+      continue;
+    }
+    DialogEffect effect;
+    effect.set_flag = item.value("set_flag", std::string{});
+    if (item.contains("value") && item["value"].is_boolean()) {
+      effect.flag_value = item["value"].get<bool>();
+    }
+    if (item.contains("relationship") && item["relationship"].is_number_integer()) {
+      effect.relationship_delta = item["relationship"].get<int>();
+    }
+    effects.push_back(effect);
+  }
+  return effects;
+}
+
+void ParseNextStep(const json& node, DialogChoice& choice) {
+  if (!node.contains("next_step")) {
+    return;
+  }
+  const auto& next = node["next_step"];
+  if (next.is_number_integer()) {
+    choice.next_step = next.get<int>();
+  } else if (next.is_string()) {
+    choice.next_id = next.get<std::string>();
+  }
+}
+
+}  // namespace
 
 std::string ReplaceDialogTokens(std::string text, const std::string& instance_name,
                                 const std::string& type_name) {
@@ -23,6 +86,20 @@ std::string ReplaceDialogTokens(std::string text, const std::string& instance_na
   replace_all("${instance}", instance_name);
   replace_all("${type}", type_name);
   replace_all("${name}", instance_name);
+  return text;
+}
+
+std::string FormatDialogText(const DialogStep& step, const TalkTarget& talk, const PlayerSave& save) {
+  std::string text = ReplaceDialogTokens(step.text, talk.display_name, talk.dialog_key);
+  const int rel = talk.kind == MapEntityKind::Npc ? GetRelationship(save, talk.id) : talk.relationship;
+  auto replace_all = [&](const std::string& token, const std::string& value) {
+    size_t pos = 0;
+    while ((pos = text.find(token, pos)) != std::string::npos) {
+      text.replace(pos, token.size(), value);
+      pos += value.size();
+    }
+  };
+  replace_all("${relationship}", std::to_string(rel));
   return text;
 }
 
@@ -45,7 +122,15 @@ bool LoadDialogTreeFromJson(const nlohmann::json& root, DialogTree& out, const s
     }
 
     DialogStep step;
+    step.id = step_json.value("id", std::string{});
     step.text = step_json["text"].get<std::string>();
+    step.entry = step_json.value("entry", true);
+    if (step_json.contains("cond")) {
+      step.cond = ParseCondition(step_json["cond"]);
+    }
+    if (step_json.contains("effects")) {
+      step.effects = ParseEffects(step_json["effects"]);
+    }
 
     if (step_json.contains("choices")) {
       if (!step_json["choices"].is_array()) {
@@ -60,7 +145,13 @@ bool LoadDialogTreeFromJson(const nlohmann::json& root, DialogTree& out, const s
         }
         DialogChoice choice;
         choice.label = choice_json["label"].get<std::string>();
-        choice.next_step = choice_json.value("next_step", -1);
+        ParseNextStep(choice_json, choice);
+        if (choice_json.contains("cond")) {
+          choice.cond = ParseCondition(choice_json["cond"]);
+        }
+        if (choice_json.contains("effects")) {
+          choice.effects = ParseEffects(choice_json["effects"]);
+        }
         step.choices.push_back(std::move(choice));
       }
     }
@@ -138,10 +229,15 @@ std::unordered_map<std::string, DialogTree> LoadDialogRegistry(const std::string
 }
 
 DialogTree MakeFallbackDialogTree(const std::string& instance_name, const std::string& type_name) {
-  return DialogTree{{
-      {type_name + " " + instance_name + ": There's nothing special here.", {}},
-      {"Press ESC to close.", {}},
-  }, 0};
+  DialogTree tree;
+  DialogStep first;
+  first.text = type_name + " " + instance_name + ": There's nothing special here.";
+  DialogStep second;
+  second.text = "Press ESC to close.";
+  tree.steps.push_back(std::move(first));
+  tree.steps.push_back(std::move(second));
+  tree.current_step = 0;
+  return tree;
 }
 
 DialogTree MakeDialogTreeForInstance(const std::string& instance_name, const std::string& type_name,
@@ -198,4 +294,138 @@ bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& o
   }
   TalkIdentity(*entity, out_name, out_type);
   return true;
+}
+
+bool DialogConditionPasses(const DialogCondition& cond, const PlayerSave& save,
+                           const std::string& npc_id) {
+  if (!cond.flag.empty() && GetFlag(save, cond.flag) != cond.flag_equals) {
+    return false;
+  }
+  if (cond.relationship_min >= 0 && GetRelationship(save, npc_id) < cond.relationship_min) {
+    return false;
+  }
+  if (cond.relationship_max >= 0 && GetRelationship(save, npc_id) > cond.relationship_max) {
+    return false;
+  }
+  return true;
+}
+
+void ApplyDialogEffects(const std::vector<DialogEffect>& effects, PlayerSave& save,
+                        const std::string& npc_id) {
+  for (const auto& effect : effects) {
+    if (!effect.set_flag.empty()) {
+      SetFlag(save, effect.set_flag, effect.flag_value);
+    }
+    if (effect.relationship_delta != 0) {
+      AddRelationship(save, npc_id, effect.relationship_delta);
+    }
+  }
+}
+
+int FindStepIndexById(const DialogTree& tree, const std::string& id) {
+  if (id.empty()) {
+    return -1;
+  }
+  for (int i = 0; i < static_cast<int>(tree.steps.size()); ++i) {
+    if (tree.steps[static_cast<size_t>(i)].id == id) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int FindNextValidStep(const DialogTree& tree, int start_index, const PlayerSave& save,
+                      const std::string& npc_id, bool entry_only) {
+  if (start_index < 0) {
+    start_index = 0;
+  }
+  for (int i = start_index; i < static_cast<int>(tree.steps.size()); ++i) {
+    const DialogStep& step = tree.steps[static_cast<size_t>(i)];
+    if (entry_only && !step.entry) {
+      continue;
+    }
+    if (DialogConditionPasses(step.cond, save, npc_id)) {
+      return i;
+    }
+  }
+  return -1;
+}
+
+int ResolveChoiceTarget(const DialogTree& tree, const DialogChoice& choice) {
+  if (!choice.next_id.empty()) {
+    return FindStepIndexById(tree, choice.next_id);
+  }
+  return choice.next_step;
+}
+
+namespace {
+
+void EnterStep(DialogTree& tree, int index, PlayerSave& save, const std::string& npc_id) {
+  tree.current_step = index;
+  if (index >= 0 && index < static_cast<int>(tree.steps.size())) {
+    ApplyDialogEffects(tree.steps[static_cast<size_t>(index)].effects, save, npc_id);
+  }
+}
+
+}  // namespace
+
+bool OpenDialogOnValidStep(DialogTree& tree, PlayerSave& save, const std::string& npc_id) {
+  int index = FindNextValidStep(tree, 0, save, npc_id, true);
+  if (index < 0) {
+    index = FindNextValidStep(tree, 0, save, npc_id, false);
+  }
+  if (index < 0) {
+    return false;
+  }
+  EnterStep(tree, index, save, npc_id);
+  return true;
+}
+
+DialogAdvance AdvanceDialogNoChoice(DialogTree& tree, PlayerSave& save, const std::string& npc_id) {
+  const int next = FindNextValidStep(tree, tree.current_step + 1, save, npc_id, false);
+  if (next < 0) {
+    return DialogAdvance::Close;
+  }
+  EnterStep(tree, next, save, npc_id);
+  return DialogAdvance::Stay;
+}
+
+DialogAdvance PickDialogChoice(DialogTree& tree, int choice_index, PlayerSave& save,
+                               const std::string& npc_id) {
+  if (tree.current_step < 0 || tree.current_step >= static_cast<int>(tree.steps.size())) {
+    return DialogAdvance::Close;
+  }
+  const DialogStep& step = tree.steps[static_cast<size_t>(tree.current_step)];
+  if (choice_index < 0 || choice_index >= static_cast<int>(step.choices.size())) {
+    return DialogAdvance::Close;
+  }
+  const DialogChoice& choice = step.choices[static_cast<size_t>(choice_index)];
+  ApplyDialogEffects(choice.effects, save, npc_id);
+  int dest = ResolveChoiceTarget(tree, choice);
+  if (dest >= 0 && dest < static_cast<int>(tree.steps.size())) {
+    if (!DialogConditionPasses(tree.steps[static_cast<size_t>(dest)].cond, save, npc_id)) {
+      dest = FindNextValidStep(tree, dest, save, npc_id, false);
+    }
+  } else {
+    dest = -1;
+  }
+  if (dest < 0) {
+    return DialogAdvance::Close;
+  }
+  EnterStep(tree, dest, save, npc_id);
+  return DialogAdvance::Stay;
+}
+
+void VisibleDialogChoices(const DialogStep& step, const PlayerSave& save, const std::string& npc_id,
+                          std::vector<int>& out_indices, std::vector<std::string>& out_labels) {
+  out_indices.clear();
+  out_labels.clear();
+  for (int i = 0; i < static_cast<int>(step.choices.size()); ++i) {
+    const DialogChoice& choice = step.choices[static_cast<size_t>(i)];
+    if (!DialogConditionPasses(choice.cond, save, npc_id)) {
+      continue;
+    }
+    out_indices.push_back(i);
+    out_labels.push_back(choice.label);
+  }
 }

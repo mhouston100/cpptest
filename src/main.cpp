@@ -81,6 +81,7 @@ int main() {
   SetMasterVolume(master_volume);
 
   GroundDrawResources ground = LoadGroundDrawResources();
+  MapVisuals map_visuals = LoadMapVisuals();
 
   // START REMOVE-ALL STUDY NOTES
   // Load the initial level before the gameplay loop starts so the camera and player
@@ -291,11 +292,13 @@ int main() {
         adjacent_talk = {};
       }
       if (IsKeyPressed(KEY_E) && has_adjacent_interactable) {
-        interaction_dialog = true;
         active_talk = adjacent_talk;
         active_dialog = MakeDialogTreeForInstance(active_talk.display_name, active_talk.dialog_key,
                                                  dialog_registry);
-        active_dialog.current_step = 0;
+        if (OpenDialogOnValidStep(active_dialog, player_save, active_talk.id)) {
+          interaction_dialog = true;
+          SavePlayerSave(player_save);
+        }
       }
     } else if (mode == GameMode::Dialog) {
       if (load_err.empty()) {
@@ -305,12 +308,15 @@ int main() {
         interaction_dialog = false;
       } else {
         const auto& step = active_dialog.steps[active_dialog.current_step];
-        if (step.choices.empty() && IsKeyPressed(KEY_ENTER)) {
-          if (active_dialog.current_step < static_cast<int>(active_dialog.steps.size()) - 1) {
-            active_dialog.current_step += 1;
-          } else {
+        std::vector<int> visible_indices;
+        std::vector<std::string> visible_labels;
+        VisibleDialogChoices(step, player_save, active_talk.id, visible_indices, visible_labels);
+        if (visible_labels.empty() && IsKeyPressed(KEY_ENTER)) {
+          if (AdvanceDialogNoChoice(active_dialog, player_save, active_talk.id) ==
+              DialogAdvance::Close) {
             interaction_dialog = false;
           }
+          SavePlayerSave(player_save);
         }
       }
     } else if (mode == GameMode::Menu) {
@@ -332,7 +338,7 @@ int main() {
     if (load_err.empty()) {
       DrawGroundWithMapEdge(ground, map, g_tileWorld);
       DrawWorldGridForMap(map, Color{72, 86, 104, 255});
-      DrawWallCells(map);
+      DrawTiledMap(map_visuals, map);
       DrawMapEntities(map);
     }
 
@@ -384,32 +390,31 @@ int main() {
     if (mode == GameMode::Dialog) {
       if (!active_dialog.steps.empty()) {
         const auto& step = active_dialog.steps[active_dialog.current_step];
+        std::vector<int> visible_indices;
+        std::vector<std::string> visible_labels;
+        VisibleDialogChoices(step, player_save, active_talk.id, visible_indices, visible_labels);
+        const std::string spoken = FormatDialogText(step, active_talk, player_save);
         const float box_w = static_cast<float>(kUiLogicalW) - pad * 2.f;
         const float box_x = pad;
-        const int choice_n = static_cast<int>(step.choices.size());
+        const int choice_n = static_cast<int>(visible_labels.size());
         const float list_h = choice_n > 0 ? UiChoiceListHeight(choice_n) : 0.f;
         const float box_h = std::max(120.f, pad + line + list_h + line + pad);
         const float box_y = static_cast<float>(kUiLogicalH) - box_h - pad;
         DrawPanel(ui, box_x, box_y, box_w, box_h);
-        DrawLabel(ui, box_x + pad, box_y + pad, step.text.c_str(), body, kUiTheme.text);
-        if (step.choices.empty()) {
+        DrawLabel(ui, box_x + pad, box_y + pad, spoken.c_str(), body, kUiTheme.text);
+        if (visible_labels.empty()) {
           DrawLabel(ui, box_x + pad, box_y + box_h - line, "Press ENTER to continue or ESC to close",
                     body, kUiTheme.text_muted);
         } else {
-          std::vector<std::string> labels;
-          labels.reserve(step.choices.size());
-          for (const auto& choice : step.choices) {
-            labels.push_back(choice.label);
-          }
           const int picked =
-              DrawChoiceList(ui, box_x + pad, box_y + pad + line, box_w - pad * 2.f, labels);
+              DrawChoiceList(ui, box_x + pad, box_y + pad + line, box_w - pad * 2.f, visible_labels);
           if (picked >= 0 && picked < choice_n) {
-            const int next_step = step.choices[picked].next_step;
-            if (next_step >= 0 && next_step < static_cast<int>(active_dialog.steps.size())) {
-              active_dialog.current_step = next_step;
-            } else {
+            const int choice_index = visible_indices[static_cast<size_t>(picked)];
+            if (PickDialogChoice(active_dialog, choice_index, player_save, active_talk.id) ==
+                DialogAdvance::Close) {
               interaction_dialog = false;
             }
+            SavePlayerSave(player_save);
           }
           DrawLabel(ui, box_x + pad, box_y + box_h - line, "Click or press 1-9, ESC to close", body,
                     kUiTheme.text_muted);
@@ -419,6 +424,7 @@ int main() {
       }
     } else if (mode == GameMode::Playing && has_adjacent_interactable) {
       if (adjacent_talk.kind == MapEntityKind::Npc) {
+        adjacent_talk.relationship = GetRelationship(player_save, adjacent_talk.id);
         DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad,
                   TextFormat("Press E to talk to %s  ·  rel %d", adjacent_talk.display_name.c_str(),
                              adjacent_talk.relationship),
@@ -528,6 +534,7 @@ int main() {
     EndDrawing();
   }
 
+  UnloadMapVisuals(map_visuals);
   UnloadGroundDrawResources(ground);
   CloseAudioDevice();
   CloseWindow();

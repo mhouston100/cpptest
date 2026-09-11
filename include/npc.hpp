@@ -46,5 +46,9 @@ void HydrateNpcSave(PlayerSave& save, const NpcRegistry& registry);
 bool SavePlayerSave(const PlayerSave& save);
 [[nodiscard]] TalkTarget ResolveTalkTarget(const MapEntity& entity, const NpcRegistry& registry,
                                            PlayerSave& save);
+void AddRelationship(PlayerSave& save, const std::string& npc_id, int delta);
+[[nodiscard]] bool GetFlag(const PlayerSave& save, const std::string& flag);
+void SetFlag(PlayerSave& save, const std::string& flag, bool value);
+[[nodiscard]] int GetRelationship(const PlayerSave& save, const std::string& npc_id);
 
 }  // namespace cpptest

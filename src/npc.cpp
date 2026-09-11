@@ -195,6 +195,37 @@ bool SavePlayerSave(const PlayerSave& save) {
   return false;
 }
 
+void AddRelationship(PlayerSave& save, const std::string& npc_id, int delta) {
+  if (npc_id.empty() || delta == 0) {
+    return;
+  }
+  NpcState& state = EnsureNpcState(save, npc_id, 50);
+  state.relationship = ClampRelationship(state.relationship + delta);
+}
+
+bool GetFlag(const PlayerSave& save, const std::string& flag) {
+  if (flag.empty()) {
+    return false;
+  }
+  const auto it = save.flags.find(flag);
+  return it != save.flags.end() && it->second;
+}
+
+void SetFlag(PlayerSave& save, const std::string& flag, bool value) {
+  if (flag.empty()) {
+    return;
+  }
+  save.flags[flag] = value;
+}
+
+int GetRelationship(const PlayerSave& save, const std::string& npc_id) {
+  const auto it = save.npcs.find(npc_id);
+  if (it == save.npcs.end()) {
+    return 50;
+  }
+  return ClampRelationship(it->second.relationship);
+}
+
 TalkTarget ResolveTalkTarget(const MapEntity& entity, const NpcRegistry& registry, PlayerSave& save) {
   TalkTarget target;
   target.kind = entity.kind;

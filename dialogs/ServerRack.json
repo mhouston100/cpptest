@@ -1,20 +1,37 @@
 {
   "steps": [
     {
-      "text": "${instance}: SYSTEM ALERT. Manual inspection required."
+      "id": "alert",
+      "text": "${instance}: SYSTEM ALERT. Manual inspection required.",
+      "cond": { "flag": "rack_inspected", "equals": false }
     },
     {
+      "id": "ask",
       "text": "Run diagnostics now?",
+      "cond": { "flag": "rack_inspected", "equals": false },
       "choices": [
-        {"label": "Inspect rack", "next_step": 2},
-        {"label": "Leave it", "next_step": 3}
+        {
+          "label": "Inspect rack",
+          "next_step": "done",
+          "effects": [{ "set_flag": "rack_inspected", "value": true }]
+        },
+        { "label": "Leave it", "next_step": "left" }
       ]
     },
     {
+      "id": "done",
+      "entry": false,
       "text": "Diagnostics complete. All systems nominal."
     },
     {
+      "id": "left",
+      "entry": false,
       "text": "Rack left untouched."
+    },
+    {
+      "id": "already",
+      "text": "${instance}: Last inspection is still on file. No new alerts.",
+      "cond": { "flag": "rack_inspected" }
     }
   ]
 }

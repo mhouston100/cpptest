@@ -1,0 +1,7 @@
+{
+  "atlas": "map/officewall.jpg",
+  "columns": 4,
+  "rows": 3,
+  "floor": 0,
+  "walls": [0, 1, 2, 4, 5, 8]
+}
