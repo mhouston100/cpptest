@@ -1,12 +1,15 @@
 #include <algorithm>
 #include <cmath>
 #include <string>
+#include <unordered_map>
 #include <vector>
 
 #include <raylib.h>
 
 #include "camera.hpp"
+#include "day.hpp"
 #include "dialog.hpp"
+#include "dice.hpp"
 #include "display.hpp"
 #include "game.hpp"
 #include "game_map.hpp"
@@ -28,6 +31,7 @@
 namespace {
 
 constexpr float kCamZoomSmooth = 20.f;
+constexpr float kWarpPadHalfExtent = 0.25f;
 
 enum class MapFade { Idle, Out, In };
 enum class PausePage { Root, Options };
@@ -128,7 +132,19 @@ int main() {
   }
   PlayerSave player_save = LoadPlayerSave();
   HydrateNpcSave(player_save, npc_registry);
+  EnsureDaySave(player_save);
+  EnsureDiceBag(player_save);
+  if (load_err.empty()) {
+    CaptureNpcPads(map, current_map_id, npc_registry, player_save);
+  }
+  SyncNpcSchedules(player_save, npc_registry);
   SavePlayerSave(player_save);
+
+  std::unordered_map<std::string, IncidentDef> incident_registry;
+  const std::string incident_err = LoadIncidentRegistry("incidents", incident_registry);
+  if (!incident_err.empty()) {
+    TraceLog(LOG_WARNING, "Incidents: %s", incident_err.c_str());
+  }
 
   Camera3D camera{};
   camera.fovy = 50.f;
@@ -140,14 +156,67 @@ int main() {
   TalkTarget active_talk{};
   DialogTree active_dialog;
   bool in_menu = false;
+  bool in_sleep = false;
+  bool in_incident = false;
+  bool sleep_forced = false;
+  SleepSummary sleep_preview{};
+  IncidentPlay incident_play{};
   PausePage pause_page = PausePage::Root;
   GameOptions draft_options{};
   int draft_mode = 0;
   int draft_res = 2;
 
+  const auto open_sleep = [&](const bool forced) {
+    sleep_preview = MakeSleepSummary(player_save);
+    in_sleep = true;
+    sleep_forced = forced;
+    in_menu = false;
+    interaction_dialog = false;
+    in_incident = false;
+  };
+  const auto confirm_sleep = [&]() {
+    ApplySleep(player_save, sleep_preview);
+    SyncNpcSchedules(player_save, npc_registry);
+    SavePlayerSave(player_save);
+    in_sleep = false;
+    sleep_forced = false;
+  };
+  const auto maybe_force_sleep = [&]() {
+    if (!in_sleep && DayShouldForceSleep(player_save)) {
+      open_sleep(true);
+    }
+  };
+  const auto try_start_queued_incident = [&]() {
+    if (player_save.queued_incident.empty()) {
+      return;
+    }
+    const std::string id = player_save.queued_incident;
+    player_save.queued_incident.clear();
+    const IncidentDef* def = FindIncident(incident_registry, id);
+    if (def == nullptr) {
+      TraceLog(LOG_WARNING, "Unknown incident: %s", id.c_str());
+      return;
+    }
+    EnsureDiceBag(player_save);
+    BeginIncident(incident_play, *def);
+    in_incident = true;
+    interaction_dialog = false;
+    in_menu = false;
+  };
+  const auto finish_incident = [&]() {
+    if (!incident_play.resolved) {
+      ResolveIncident(incident_play, player_save);
+    }
+    SyncNpcSchedules(player_save, npc_registry);
+    SavePlayerSave(player_save);
+    maybe_force_sleep();
+  };
+
   while (!WindowShouldClose()) {
     const float dt = GetFrameTime();
-    GameMode mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
+    GameMode mode =
+        ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu, in_sleep,
+                        in_incident);
 
     if (IsKeyPressed(KEY_ESCAPE)) {
       if (mode == GameMode::Playing) {
@@ -159,11 +228,24 @@ int main() {
         } else {
           in_menu = false;
         }
+      } else if (mode == GameMode::Sleep) {
+        if (sleep_forced) {
+          confirm_sleep();
+        } else {
+          in_sleep = false;
+        }
+      } else if (mode == GameMode::Incident) {
+        if (incident_play.resolved || !incident_play.rolled) {
+          in_incident = false;
+        } else {
+          finish_incident();
+        }
       } else if (mode == GameMode::Dialog) {
         interaction_dialog = false;
       }
     }
-    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
+    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu, in_sleep,
+                           in_incident);
 
     // START REMOVE-ALL STUDY NOTES
     // Map transitions happen as a fade rather than a hard reset so the level swap
@@ -199,6 +281,8 @@ int main() {
             SpawnPlayerAtSpawn(map, pending_spawn, player_state.position);
             player_state.velocity = {0.f, 0.f};
             warp_armed = false;
+            CaptureNpcPads(map, current_map_id, npc_registry, player_save);
+            SyncNpcSchedules(player_save, npc_registry);
           }
         }
         map_fade = MapFade::In;
@@ -209,6 +293,7 @@ int main() {
       if (map_fade_t >= k_map_fade_sec) {
         map_fade = MapFade::Idle;
         pending_map = nullptr;
+        maybe_force_sleep();
       }
     }
 
@@ -252,6 +337,7 @@ int main() {
     }
 
     if (load_err.empty() && mode == GameMode::Playing) {
+      SyncNpcSchedules(player_save, npc_registry);
       Vector2 input{0.f, 0.f};
       if (IsKeyDown(KEY_W)) input.y += 1.f;
       if (IsKeyDown(KEY_S)) input.y -= 1.f;
@@ -270,7 +356,9 @@ int main() {
       const MapEntity* warp = map.FindAt(cell_x, cell_y, MapEntityKind::Warp);
       if (warp == nullptr) {
         warp_armed = true;
-      } else if (warp_armed) {
+      } else if (warp_armed &&
+                 PlayerInCellInset(player_state.position, map, warp->cell_x, warp->cell_y,
+                                   kWarpPadHalfExtent)) {
         const MapCatalogEntry* dest = FindCatalogMap(catalog, warp->target_map);
         if (dest == nullptr) {
           TraceLog(LOG_WARNING, "Warp target not in catalog: %s", warp->target_map.c_str());
@@ -281,14 +369,20 @@ int main() {
           map_fade = MapFade::Out;
           map_fade_t = 0.f;
           warp_armed = false;
+          ApplyDayDelta(player_save, kTravelMinutes, kTravelEnergy, 0, 0);
+          SyncNpcSchedules(player_save, npc_registry);
+          SavePlayerSave(player_save);
         }
       }
 
-      const MapEntity* talk_entity = FindAdjacentTalkable(player_state.position, map);
-      has_adjacent_interactable = talk_entity != nullptr;
-      if (talk_entity != nullptr) {
-        adjacent_talk = ResolveTalkTarget(*talk_entity, npc_registry, player_save);
-      } else {
+      if (IsKeyPressed(KEY_N)) {
+        open_sleep(false);
+      }
+
+      has_adjacent_interactable =
+          FindAdjacentTalkTarget(player_state.position, map, current_map_id, npc_registry,
+                                 player_save, adjacent_talk);
+      if (!has_adjacent_interactable) {
         adjacent_talk = {};
       }
       if (IsKeyPressed(KEY_E) && has_adjacent_interactable) {
@@ -296,8 +390,14 @@ int main() {
         active_dialog = MakeDialogTreeForInstance(active_talk.display_name, active_talk.dialog_key,
                                                  dialog_registry);
         if (OpenDialogOnValidStep(active_dialog, player_save, active_talk.id)) {
+          if (active_talk.kind == MapEntityKind::Npc) {
+            ApplyDayDelta(player_save, kTalkMinutes, kTalkEnergy, 0, 0);
+          }
           interaction_dialog = true;
+          SyncNpcSchedules(player_save, npc_registry);
           SavePlayerSave(player_save);
+          try_start_queued_incident();
+          maybe_force_sleep();
         }
       }
     } else if (mode == GameMode::Dialog) {
@@ -316,16 +416,35 @@ int main() {
               DialogAdvance::Close) {
             interaction_dialog = false;
           }
+          SyncNpcSchedules(player_save, npc_registry);
           SavePlayerSave(player_save);
+          try_start_queued_incident();
+          maybe_force_sleep();
         }
       }
-    } else if (mode == GameMode::Menu) {
+    } else if (mode == GameMode::Incident) {
+      if (load_err.empty()) {
+        UpdatePlayerMovement(player_state, map, Vector2{0.f, 0.f}, dt, g_camYawDeg);
+      }
+      if (!incident_play.resolved) {
+        const int hold_keys[kDiceCount] = {KEY_ONE, KEY_TWO, KEY_THREE, KEY_FOUR, KEY_FIVE};
+        for (int i = 0; i < kDiceCount; ++i) {
+          if (IsKeyPressed(hold_keys[i])) {
+            ToggleIncidentHold(incident_play, i);
+          }
+        }
+        if (incident_play.rolls_left > 0 && IsKeyPressed(KEY_SPACE)) {
+          RollIncidentDice(incident_play, player_save.dice);
+        }
+      }
+    } else if (mode == GameMode::Menu || mode == GameMode::Sleep) {
       if (load_err.empty()) {
         UpdatePlayerMovement(player_state, map, Vector2{0.f, 0.f}, dt, g_camYawDeg);
       }
     }
 
-    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu);
+    mode = ResolveGameMode(map_fade != MapFade::Idle, interaction_dialog, in_menu, in_sleep,
+                           in_incident);
 
     Vector3 focus = TileToWorldCenter(player_state.position.x, player_state.position.y);
     focus.y += g_tileWorld * 0.35f;
@@ -336,10 +455,14 @@ int main() {
     BeginMode3D(camera);
 
     if (load_err.empty()) {
+      SyncNpcSchedules(player_save, npc_registry);
       DrawGroundWithMapEdge(ground, map, g_tileWorld);
       DrawWorldGridForMap(map, Color{72, 86, 104, 255});
       DrawTiledMap(map_visuals, map);
       DrawMapEntities(map);
+      std::vector<WorldNpcPose> npc_poses;
+      CollectNpcsOnMap(map, current_map_id, npc_registry, player_save, npc_poses);
+      DrawNpcMarkers(map, npc_poses);
     }
 
     const Vector3 feet = TileToWorldCenter(player_state.position.x, player_state.position.y);
@@ -365,7 +488,7 @@ int main() {
     const float pad = 12.f;
     const float body = kUiTheme.type_body;
     const float line = 24.f;
-    DrawLabel(ui, pad, pad, "WASD move   walk onto blue to travel   F1/F2 debug map   [ / ] tile size",
+    DrawLabel(ui, pad, pad, "WASD move   E talk   N sleep   walk onto blue to travel   F1/F2 debug map",
               body, RAYWHITE);
     const int map_index = CatalogIndexOf(catalog, current_map_id);
     DrawLabel(ui, pad, pad + line,
@@ -387,7 +510,193 @@ int main() {
                          static_cast<double>(g_camYawDeg), GameModeName(mode)),
               body, Color{160, 200, 230, 255});
 
-    if (mode == GameMode::Dialog) {
+    {
+      const std::string clock = FormatClock(player_save.minutes);
+      const std::string hud_day = TextFormat("Day %d   %s", player_save.day, clock.c_str());
+      const std::string hud_stats =
+          GetFlag(player_save, "job_helpdesk")
+              ? std::string(TextFormat("Helpdesk   Energy %d   Stress %d   $%d", player_save.energy,
+                                       player_save.stress, player_save.money))
+              : std::string(TextFormat("Energy %d   Stress %d   $%d", player_save.energy,
+                                       player_save.stress, player_save.money));
+      const float hud_w = std::max(UiMeasure(hud_day.c_str(), body), UiMeasure(hud_stats.c_str(), body));
+      const float hud_x = static_cast<float>(kUiLogicalW) - pad * 2.f - hud_w;
+      const float hud_y = pad;
+      const float hud_h = pad + line * 2.f + pad * 0.5f;
+      DrawPanel(ui, hud_x - pad, hud_y, hud_w + pad * 2.f, hud_h);
+      Color clock_color = kUiTheme.text;
+      if (IsVeryLate(player_save.minutes)) {
+        clock_color = Color{255, 140, 110, 255};
+      } else if (IsLate(player_save.minutes)) {
+        clock_color = Color{255, 200, 120, 255};
+      }
+      DrawLabel(ui, hud_x, hud_y + pad * 0.5f, hud_day.c_str(), body, clock_color);
+      const Color energy_color =
+          player_save.energy < 40 ? Color{255, 170, 120, 255} : kUiTheme.text;
+      DrawLabel(ui, hud_x, hud_y + pad * 0.5f + line, hud_stats.c_str(), body, energy_color);
+    }
+
+    if (mode == GameMode::Sleep) {
+      DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
+      const float title = kUiTheme.type_title;
+      const float panel_w = 640.f;
+      const float panel_h = 420.f;
+      const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
+      const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
+      DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
+      const char* heading = sleep_forced ? "You collapsed" : "Call it a night";
+      const float inner_x = panel_x + UiSpace(3);
+      DrawLabel(ui, panel_x + (panel_w - UiMeasure(heading, title)) * 0.5f, panel_y + UiSpace(3),
+                heading, title, kUiTheme.text);
+      float y = panel_y + UiSpace(9);
+      DrawLabel(ui, inner_x, y,
+                TextFormat("Day %d ended at %s", sleep_preview.from_day,
+                           FormatClock(sleep_preview.bedtime_minutes).c_str()),
+                body, kUiTheme.text);
+      y += line;
+      if (sleep_preview.worked_late) {
+        DrawLabel(ui, inner_x, y, "You stayed late on tickets. Morning energy takes the hit.", body,
+                  Color{255, 180, 120, 255});
+        y += line;
+      } else if (sleep_preview.very_late) {
+        DrawLabel(ui, inner_x, y, "Turned in after 22:00. Sleep was thin.", body,
+                  Color{255, 180, 120, 255});
+        y += line;
+      } else if (sleep_preview.stayed_late) {
+        DrawLabel(ui, inner_x, y, "Past 18:00 — tomorrow starts slower.", body,
+                  Color{255, 210, 140, 255});
+        y += line;
+      } else {
+        DrawLabel(ui, inner_x, y, "A reasonable hour. You should recover.", body, kUiTheme.text_muted);
+        y += line;
+      }
+      y += UiSpace(1);
+      DrawLabel(ui, inner_x, y,
+                TextFormat("Energy %d  ->  %d", sleep_preview.energy_before, sleep_preview.energy_after),
+                body, kUiTheme.text);
+      y += line;
+      DrawLabel(ui, inner_x, y,
+                TextFormat("Stress %d  ->  %d", sleep_preview.stress_before, sleep_preview.stress_after),
+                body, kUiTheme.text);
+      y += line;
+      DrawLabel(ui, inner_x, y, TextFormat("$%d in the account", sleep_preview.money), body,
+                kUiTheme.text);
+      const char* footer = sleep_forced ? "ENTER to wake" : "ENTER to wake   ESC to keep going";
+      DrawLabel(ui, panel_x + (panel_w - UiMeasure(footer, body)) * 0.5f,
+                panel_y + panel_h - UiSpace(10), footer, body, kUiTheme.text_muted);
+      const Vector2 wake_size = UiButtonSize("Wake");
+      if (DrawButton(ui, panel_x + (panel_w - wake_size.x) * 0.5f,
+                     panel_y + panel_h - wake_size.y - UiSpace(3), "Wake", KEY_ENTER)) {
+        confirm_sleep();
+      }
+    } else if (mode == GameMode::Incident) {
+      DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
+      const float title = kUiTheme.type_title;
+      const float panel_w = 760.f;
+      const float panel_h = 520.f;
+      const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
+      const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
+      DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
+      EnsureDiceBag(player_save);
+      const float inner_x = panel_x + UiSpace(3);
+      DrawLabel(ui, panel_x + (panel_w - UiMeasure(incident_play.def.title.c_str(), title)) * 0.5f,
+                panel_y + UiSpace(3), incident_play.def.title.c_str(), title, kUiTheme.text);
+      float y = panel_y + UiSpace(9);
+      if (!incident_play.def.prompt.empty()) {
+        DrawLabel(ui, inner_x, y, incident_play.def.prompt.c_str(), body, kUiTheme.text_muted);
+        y += line;
+      }
+      DrawLabel(ui, inner_x, y,
+                TextFormat("Target %d   skill %s   +%d if a %s face shows", incident_play.def.target,
+                           incident_play.def.skill.c_str(), incident_play.def.skill_bonus,
+                           incident_play.def.skill.c_str()),
+                body, kUiTheme.text);
+      y += line * 2.f;
+
+      UiTheme held_theme = kUiTheme;
+      held_theme.button_fill = Color{70, 92, 48, 255};
+      held_theme.button_hover = Color{88, 112, 58, 255};
+      float die_x = inner_x;
+      const float die_gap = UiSpace(2);
+      for (int i = 0; i < kDiceCount; ++i) {
+        std::string label = "-";
+        if (incident_play.rolled) {
+          label = std::to_string(incident_play.pips[static_cast<size_t>(i)]);
+          const std::string tag =
+              DieFaceTag(player_save.dice.dice[static_cast<size_t>(i)],
+                         incident_play.pips[static_cast<size_t>(i)]);
+          if (!tag.empty()) {
+            label += " ";
+            label += tag;
+          }
+          if (incident_play.held[static_cast<size_t>(i)]) {
+            label = "[" + label + "]";
+          }
+        }
+        const bool held = incident_play.held[static_cast<size_t>(i)];
+        if (DrawButton(ui, die_x, y, label.c_str(), 0, held ? held_theme : kUiTheme) &&
+            !incident_play.resolved) {
+          ToggleIncidentHold(incident_play, i);
+        }
+        die_x += UiButtonSize(label.c_str(), held ? held_theme : kUiTheme).x + die_gap;
+      }
+      y += UiButtonSize("6 WEB", kUiTheme).y + UiSpace(2);
+      DrawLabel(ui, inner_x, y, "Click a die or 1-5 to hold. R / Space to roll.", body,
+                kUiTheme.text_muted);
+      y += line * 2.f;
+
+      if (incident_play.rolled) {
+        if (incident_play.tagged) {
+          DrawLabel(ui, inner_x, y,
+                    TextFormat("Sum %d  +  %d %s  =  %d  vs  %d", incident_play.pip_sum,
+                               incident_play.bonus, incident_play.def.skill.c_str(), incident_play.score,
+                               incident_play.def.target),
+                    body, Color{180, 220, 140, 255});
+        } else {
+          DrawLabel(ui, inner_x, y,
+                    TextFormat("Sum %d  (no %s face)  vs  %d", incident_play.pip_sum,
+                               incident_play.def.skill.c_str(), incident_play.def.target),
+                    body, kUiTheme.text);
+        }
+        y += line;
+      }
+      DrawLabel(ui, inner_x, y, TextFormat("Rolls left: %d", incident_play.rolls_left), body,
+                kUiTheme.text_muted);
+      y += line;
+
+      if (incident_play.resolved) {
+        const char* result = incident_play.success ? "Reproduced. Ticket closed." : "Could not reproduce.";
+        DrawLabel(ui, inner_x, y, result, body,
+                  incident_play.success ? Color{180, 220, 140, 255} : Color{255, 170, 120, 255});
+        y += line;
+        DrawLabel(ui, inner_x, y,
+                  TextFormat("%s  $%d  stress %+d", incident_play.success ? "Pass" : "Fail",
+                             incident_play.success ? incident_play.def.success.money
+                                                   : incident_play.def.fail.money,
+                             incident_play.success ? incident_play.def.success.stress
+                                                   : incident_play.def.fail.stress),
+                  body, kUiTheme.text);
+        const Vector2 close_size = UiButtonSize("Close");
+        if (DrawButton(ui, panel_x + (panel_w - close_size.x) * 0.5f,
+                       panel_y + panel_h - close_size.y - UiSpace(3), "Close", KEY_ENTER)) {
+          in_incident = false;
+        }
+      } else {
+        const Vector2 roll_size = UiButtonSize("Roll");
+        const Vector2 bank_size = UiButtonSize("Bank");
+        const float gap = UiSpace(2);
+        const float btn_y = panel_y + panel_h - roll_size.y - UiSpace(3);
+        const float pair_w = roll_size.x + gap + bank_size.x;
+        const float roll_x = panel_x + (panel_w - pair_w) * 0.5f;
+        if (incident_play.rolls_left > 0 && DrawButton(ui, roll_x, btn_y, "Roll", KEY_R)) {
+          RollIncidentDice(incident_play, player_save.dice);
+        }
+        if (incident_play.rolled &&
+            DrawButton(ui, roll_x + roll_size.x + gap, btn_y, "Bank", KEY_ENTER)) {
+          finish_incident();
+        }
+      }
+    } else if (mode == GameMode::Dialog) {
       if (!active_dialog.steps.empty()) {
         const auto& step = active_dialog.steps[active_dialog.current_step];
         std::vector<int> visible_indices;
@@ -414,7 +723,10 @@ int main() {
                 DialogAdvance::Close) {
               interaction_dialog = false;
             }
+            SyncNpcSchedules(player_save, npc_registry);
             SavePlayerSave(player_save);
+            try_start_queued_incident();
+            maybe_force_sleep();
           }
           DrawLabel(ui, box_x + pad, box_y + box_h - line, "Click or press 1-9, ESC to close", body,
                     kUiTheme.text_muted);
@@ -423,23 +735,31 @@ int main() {
         interaction_dialog = false;
       }
     } else if (mode == GameMode::Playing && has_adjacent_interactable) {
+      const float prompt_y = static_cast<float>(kUiLogicalH) - line - pad;
+      if (DayShouldHintSleep(player_save)) {
+        DrawLabel(ui, pad, prompt_y - line, "It's late. Press N to sleep.", body,
+                  Color{255, 180, 120, 255});
+      }
       if (adjacent_talk.kind == MapEntityKind::Npc) {
         adjacent_talk.relationship = GetRelationship(player_save, adjacent_talk.id);
-        DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad,
+        DrawLabel(ui, pad, prompt_y,
                   TextFormat("Press E to talk to %s  ·  rel %d", adjacent_talk.display_name.c_str(),
                              adjacent_talk.relationship),
                   body, Color{220, 220, 120, 255});
       } else {
-        DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad,
+        DrawLabel(ui, pad, prompt_y,
                   TextFormat("Press E to inspect %s", adjacent_talk.display_name.c_str()), body,
                   Color{220, 220, 120, 255});
       }
+    } else if (mode == GameMode::Playing && DayShouldHintSleep(player_save)) {
+      DrawLabel(ui, pad, static_cast<float>(kUiLogicalH) - line - pad, "It's late. Press N to sleep.",
+                body, Color{255, 180, 120, 255});
     } else if (mode == GameMode::Menu) {
       DrawRectangle(0, 0, GetScreenWidth(), GetScreenHeight(), Color{0, 0, 0, 140});
       const float title = kUiTheme.type_title;
       if (pause_page == PausePage::Root) {
         const float panel_w = 520.f;
-        const float panel_h = 320.f;
+        const float panel_h = 380.f;
         const float panel_x = (static_cast<float>(kUiLogicalW) - panel_w) * 0.5f;
         const float panel_y = (static_cast<float>(kUiLogicalH) - panel_h) * 0.5f;
         DrawPanel(ui, panel_x, panel_y, panel_w, panel_h);
@@ -457,10 +777,11 @@ int main() {
         SetMasterVolume(master_volume);
         const Vector2 opt_size = UiButtonSize("Options");
         const Vector2 reset_size = UiButtonSize("Reset");
-        const float btn_y = panel_y + panel_h - reset_size.y - UiSpace(3);
+        const Vector2 sleep_size = UiButtonSize("Sleep");
         const float gap = UiSpace(2);
-        const float pair_w = opt_size.x + gap + reset_size.x;
-        const float opt_x = panel_x + (panel_w - pair_w) * 0.5f;
+        const float btn_y = panel_y + panel_h - reset_size.y - UiSpace(3);
+        const float row_w = opt_size.x + gap + reset_size.x + gap + sleep_size.x;
+        const float opt_x = panel_x + (panel_w - row_w) * 0.5f;
         if (DrawButton(ui, opt_x, btn_y, "Options")) {
           draft_options = options;
           draft_mode = WindowModeIndex(options.window_mode);
@@ -472,6 +793,9 @@ int main() {
           player_state.velocity = {0.f, 0.f};
           player_state.was_moving = false;
           player_state.was_snapping = false;
+        }
+        if (DrawButton(ui, opt_x + opt_size.x + gap + reset_size.x + gap, btn_y, "Sleep")) {
+          open_sleep(false);
         }
       } else {
         const float panel_w = 640.f;

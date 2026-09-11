@@ -1,0 +1,13 @@
+{
+  "id": "web_bug",
+  "title": "Find the web bug",
+  "prompt": "Reproduce the broken form before the reporter hangs up.",
+  "skill": "web",
+  "target": 16,
+  "skill_bonus": 5,
+  "minutes": 120,
+  "energy": -18,
+  "rolls": 3,
+  "success": { "money": 45, "stress": 6, "flag": "exp_web" },
+  "fail": { "money": 15, "stress": 14 }
+}

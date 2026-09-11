@@ -39,6 +39,12 @@ void PlayerToCell(const Vector2& p, const GameMap& m, int& ix, int& iy) {
   m.WorldToCell(p.x, p.y, ix, iy);
 }
 
+bool PlayerInCellInset(const Vector2& p, const GameMap& m, int ix, int iy, float half_extent) {
+  Vector2 center{};
+  CellCenterWorld(m, ix, iy, center);
+  return std::fabs(p.x - center.x) <= half_extent && std::fabs(p.y - center.y) <= half_extent;
+}
+
 bool IsWallAtPlayer(const Vector2& p, const GameMap& m) {
   int cx = 0, cy = 0;
   PlayerToCell(p, m, cx, cy);

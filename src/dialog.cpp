@@ -1,8 +1,10 @@
 #include "dialog.hpp"
 
+#include "day.hpp"
+#include "job.hpp"
+
 #include <filesystem>
 #include <fstream>
-#include <sstream>
 
 // START REMOVE-ALL STUDY NOTES
 // This module owns the dialog content pipeline. It reads JSON definitions, keeps a
@@ -11,12 +13,22 @@
 // END REMOVE-ALL STUDY NOTES
 
 using nlohmann::json;
+using cpptest::ApplyForJob;
+using cpptest::Course;
+using cpptest::FindCourse;
+using cpptest::FindJobListing;
+using cpptest::JobListing;
+using cpptest::TakeCourse;
+using cpptest::ApplyDayDelta;
+using cpptest::CollectNpcsOnMap;
 using cpptest::GetFlag;
 using cpptest::GetRelationship;
+using cpptest::NpcRegistry;
 using cpptest::PlayerSave;
+using cpptest::ResolveNpcTalkTarget;
 using cpptest::SetFlag;
-using cpptest::AddRelationship;
 using cpptest::TalkTarget;
+using cpptest::WorldNpcPose;
 
 namespace {
 
@@ -34,6 +46,25 @@ DialogCondition ParseCondition(const json& node) {
   }
   if (node.contains("relationship_max") && node["relationship_max"].is_number_integer()) {
     cond.relationship_max = node["relationship_max"].get<int>();
+  }
+  if (node.contains("money_min") && node["money_min"].is_number_integer()) {
+    cond.money_min = node["money_min"].get<int>();
+  }
+  auto parse_flags = [](const json& arr, std::vector<std::string>& out) {
+    if (!arr.is_array()) {
+      return;
+    }
+    for (const auto& item : arr) {
+      if (item.is_string()) {
+        out.push_back(item.get<std::string>());
+      }
+    }
+  };
+  if (node.contains("flags_on")) {
+    parse_flags(node["flags_on"], cond.flags_on);
+  }
+  if (node.contains("flags_off")) {
+    parse_flags(node["flags_off"], cond.flags_off);
   }
   return cond;
 }
@@ -55,6 +86,14 @@ std::vector<DialogEffect> ParseEffects(const json& node) {
     if (item.contains("relationship") && item["relationship"].is_number_integer()) {
       effect.relationship_delta = item["relationship"].get<int>();
     }
+    effect.minutes = item.value("minutes", 0);
+    effect.energy = item.value("energy", 0);
+    effect.stress = item.value("stress", 0);
+    effect.money = item.value("money", 0);
+    effect.health = item.value("health", 0);
+    effect.start_incident = item.value("incident", std::string{});
+    effect.apply_job = item.value("apply_job", std::string{});
+    effect.take_course = item.value("take_course", std::string{});
     effects.push_back(effect);
   }
   return effects;
@@ -269,31 +308,32 @@ DialogTree MakeDialogTreeForInstance(const std::string& instance_name, const std
   return dialog;
 }
 
-const MapEntity* FindAdjacentTalkable(const Vector2& player, const GameMap& m) {
+bool FindAdjacentTalkTarget(const Vector2& player, const GameMap& m, const std::string& map_id,
+                            const NpcRegistry& registry, PlayerSave& save, TalkTarget& out) {
   int cx = 0;
   int cy = 0;
   m.WorldToCell(player.x, player.y, cx, cy);
+
+  std::vector<WorldNpcPose> poses;
+  CollectNpcsOnMap(m, map_id, registry, save, poses);
 
   constexpr int kDirs[4][2] = {{0, -1}, {0, 1}, {-1, 0}, {1, 0}};
   for (const auto& d : kDirs) {
     const int nx = cx + d[0];
     const int ny = cy + d[1];
+    for (const auto& pose : poses) {
+      if (pose.cell_x == nx && pose.cell_y == ny) {
+        out = ResolveNpcTalkTarget(pose.id, registry, save);
+        return true;
+      }
+    }
     const MapEntity* entity = m.FindAt(nx, ny);
-    if (entity != nullptr && IsTalkable(entity->kind)) {
-      return entity;
+    if (entity != nullptr && entity->kind == MapEntityKind::Prop) {
+      out = ResolveTalkTarget(*entity, registry, save);
+      return true;
     }
   }
-  return nullptr;
-}
-
-bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
-                         std::string& out_type) {
-  const MapEntity* entity = FindAdjacentTalkable(player, m);
-  if (entity == nullptr) {
-    return false;
-  }
-  TalkIdentity(*entity, out_name, out_type);
-  return true;
+  return false;
 }
 
 bool DialogConditionPasses(const DialogCondition& cond, const PlayerSave& save,
@@ -307,6 +347,19 @@ bool DialogConditionPasses(const DialogCondition& cond, const PlayerSave& save,
   if (cond.relationship_max >= 0 && GetRelationship(save, npc_id) > cond.relationship_max) {
     return false;
   }
+  if (cond.money_min >= 0 && save.money < cond.money_min) {
+    return false;
+  }
+  for (const auto& flag : cond.flags_on) {
+    if (!GetFlag(save, flag)) {
+      return false;
+    }
+  }
+  for (const auto& flag : cond.flags_off) {
+    if (GetFlag(save, flag)) {
+      return false;
+    }
+  }
   return true;
 }
 
@@ -318,6 +371,23 @@ void ApplyDialogEffects(const std::vector<DialogEffect>& effects, PlayerSave& sa
     }
     if (effect.relationship_delta != 0) {
       AddRelationship(save, npc_id, effect.relationship_delta);
+    }
+    if (effect.minutes != 0 || effect.energy != 0 || effect.stress != 0 || effect.money != 0 ||
+        effect.health != 0) {
+      ApplyDayDelta(save, effect.minutes, effect.energy, effect.stress, effect.money, effect.health);
+    }
+    if (!effect.start_incident.empty()) {
+      save.queued_incident = effect.start_incident;
+    }
+    if (!effect.apply_job.empty()) {
+      if (const JobListing* job = FindJobListing(effect.apply_job)) {
+        static_cast<void>(ApplyForJob(save, *job));
+      }
+    }
+    if (!effect.take_course.empty()) {
+      if (const Course* course = FindCourse(effect.take_course)) {
+        static_cast<void>(TakeCourse(save, *course));
+      }
     }
   }
 }
@@ -382,6 +452,12 @@ bool OpenDialogOnValidStep(DialogTree& tree, PlayerSave& save, const std::string
 }
 
 DialogAdvance AdvanceDialogNoChoice(DialogTree& tree, PlayerSave& save, const std::string& npc_id) {
+  if (tree.current_step >= 0 && tree.current_step < static_cast<int>(tree.steps.size())) {
+    const DialogStep& step = tree.steps[static_cast<size_t>(tree.current_step)];
+    if (step.choices.empty() && !step.entry) {
+      return DialogAdvance::Close;
+    }
+  }
   const int next = FindNextValidStep(tree, tree.current_step + 1, save, npc_id, false);
   if (next < 0) {
     return DialogAdvance::Close;

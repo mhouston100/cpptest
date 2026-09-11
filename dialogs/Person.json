@@ -42,6 +42,10 @@
         "cond": { "flag": "met_alex" },
         "choices": [
           {
+            "label": "Helpdesk posting",
+            "next_step": "job_intro"
+          },
+          {
             "label": "About that backlog",
             "next_step": "quest_status",
             "cond": { "flag": "quest_alex" }
@@ -83,6 +87,45 @@
         "id": "smalltalk",
         "entry": false,
         "text": "You swap a couple of helpdesk war stories."
+      },
+      {
+        "id": "job_intro",
+        "entry": false,
+        "text": "Internal listing: helpdesk tech. They want a closed web ticket and the web fundamentals cert.",
+        "choices": [
+          { "label": "Apply", "next_step": "job_hired" },
+          { "label": "Not now", "next_step": "job_later" }
+        ]
+      },
+      {
+        "id": "job_hired",
+        "entry": false,
+        "cond": { "flags_on": ["exp_web", "cert_web"], "flags_off": ["job_helpdesk"] },
+        "effects": [{ "apply_job": "helpdesk" }],
+        "text": "Alex forwards the packet. You're on the helpdesk roster."
+      },
+      {
+        "id": "job_no_exp",
+        "entry": false,
+        "cond": { "flags_off": ["exp_web"] },
+        "text": "Rejected — no closed web ticket on file. Pull one off the rack first."
+      },
+      {
+        "id": "job_no_cert",
+        "entry": false,
+        "cond": { "flags_on": ["exp_web"], "flags_off": ["cert_web"] },
+        "text": "They like the ticket. Come back when you've got the web fundamentals cert."
+      },
+      {
+        "id": "job_already",
+        "entry": false,
+        "cond": { "flags_on": ["job_helpdesk"] },
+        "text": "You're already on the roster. Don't make Alex do the paperwork twice."
+      },
+      {
+        "id": "job_later",
+        "entry": false,
+        "text": "Listing stays up. Cert and a closed web ticket — then apply."
       }
     ]
   }

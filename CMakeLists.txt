@@ -31,15 +31,27 @@ add_executable(cpptest
   src/ldtk_load.cpp
   src/map_catalog.cpp
   src/npc.cpp
+  src/day.cpp
   src/player.cpp
   src/camera.cpp
   src/dialog.cpp
   src/display.cpp
   src/ui.cpp
   src/options.cpp
-  src/render.cpp)
+  src/render.cpp
+  src/dice.cpp
+  src/job.cpp)
 target_include_directories(cpptest PRIVATE ${CMAKE_SOURCE_DIR}/include)
 target_link_libraries(cpptest PRIVATE raylib nlohmann_json::nlohmann_json)
+
+add_executable(cpptest_tests
+  tests/job_test.cpp
+  src/job.cpp
+  src/day.cpp
+  src/npc.cpp
+  src/dice.cpp)
+target_include_directories(cpptest_tests PRIVATE ${CMAKE_SOURCE_DIR}/include)
+target_link_libraries(cpptest_tests PRIVATE raylib nlohmann_json::nlohmann_json)
 
 add_custom_command(
   TARGET cpptest
@@ -50,4 +62,6 @@ add_custom_command(
           "$<TARGET_FILE_DIR:cpptest>/dialogs"
   COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/npcs"
           "$<TARGET_FILE_DIR:cpptest>/npcs"
-  COMMENT "Copy LDtk maps, dialog JSON, and NPC registry next to executable")
+  COMMAND ${CMAKE_COMMAND} -E copy_directory "${CMAKE_SOURCE_DIR}/incidents"
+          "$<TARGET_FILE_DIR:cpptest>/incidents"
+  COMMENT "Copy LDtk maps, dialog JSON, NPC registry, and incidents next to executable")

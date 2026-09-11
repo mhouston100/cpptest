@@ -4,7 +4,9 @@
       "id": "Person001",
       "display_name": "Alex",
       "dialog_key": "Person001",
-      "relationship": 50
+      "relationship": 50,
+      "work": { "map": "office", "cell": [2, 1] },
+      "home": { "map": "floor_1", "cell": [2, 1] }
     }
   ]
 }

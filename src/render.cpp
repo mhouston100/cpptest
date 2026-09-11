@@ -362,7 +362,7 @@ void DrawMapEntities(const GameMap& m) {
   const float talk_size = tw * 0.6f;
   const float marker_size = tw * 0.45f;
   for (const auto& entity : m.entities) {
-    if (entity.kind == MapEntityKind::Npc || entity.kind == MapEntityKind::Prop) {
+    if (entity.kind == MapEntityKind::Prop) {
       DrawEntityMarker(m, entity.cell_x, entity.cell_y, talk_size, Color{244, 58, 58, 255},
                        Color{180, 40, 40, 255});
     } else if (entity.kind == MapEntityKind::Spawn) {
@@ -372,6 +372,14 @@ void DrawMapEntities(const GameMap& m) {
       DrawEntityMarker(m, entity.cell_x, entity.cell_y, marker_size, Color{56, 189, 248, 255},
                        Color{12, 74, 110, 255});
     }
+  }
+}
+
+void DrawNpcMarkers(const GameMap& m, const std::vector<cpptest::WorldNpcPose>& poses) {
+  const float talk_size = g_tileWorld * 0.6f;
+  for (const auto& pose : poses) {
+    DrawEntityMarker(m, pose.cell_x, pose.cell_y, talk_size, Color{245, 158, 11, 255},
+                     Color{146, 64, 14, 255});
   }
 }
 

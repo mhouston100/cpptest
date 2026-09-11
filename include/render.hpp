@@ -6,6 +6,7 @@
 #include <raylib.h>
 
 #include "game_map.hpp"
+#include "npc.hpp"
 
 // START REMOVE-ALL STUDY NOTES
 // Rendering helpers are placed in their own feature module to keep the main loop
@@ -41,4 +42,5 @@ void DrawWorldGridForMap(const GameMap& m, const Color line_color);
 void DrawWallCells(const GameMap& m);
 void DrawTiledMap(const MapVisuals& visuals, const GameMap& m);
 void DrawMapEntities(const GameMap& m);
+void DrawNpcMarkers(const GameMap& m, const std::vector<cpptest::WorldNpcPose>& poses);
 void DrawPlayerBlock(const Vector3& base_center, const Color fill, const Color outline);

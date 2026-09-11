@@ -19,14 +19,25 @@
 struct DialogCondition {
   std::string flag;
   bool flag_equals = true;
+  std::vector<std::string> flags_on;
+  std::vector<std::string> flags_off;
   int relationship_min = -1;
   int relationship_max = -1;
+  int money_min = -1;
 };
 
 struct DialogEffect {
   std::string set_flag;
   bool flag_value = true;
   int relationship_delta = 0;
+  int minutes = 0;
+  int energy = 0;
+  int stress = 0;
+  int money = 0;
+  int health = 0;
+  std::string start_incident;
+  std::string apply_job;
+  std::string take_course;
 };
 
 struct DialogChoice {
@@ -63,9 +74,10 @@ DialogTree MakeFallbackDialogTree(const std::string& instance_name,
 DialogTree MakeDialogTreeForInstance(const std::string& instance_name,
                                      const std::string& type_name,
                                      const std::unordered_map<std::string, DialogTree>& registry);
-bool GetAdjacentTalkable(const Vector2& player, const GameMap& m, std::string& out_name,
-                         std::string& out_type);
-const MapEntity* FindAdjacentTalkable(const Vector2& player, const GameMap& m);
+[[nodiscard]] bool FindAdjacentTalkTarget(const Vector2& player, const GameMap& m,
+                                          const std::string& map_id,
+                                          const cpptest::NpcRegistry& registry,
+                                          cpptest::PlayerSave& save, cpptest::TalkTarget& out);
 
 [[nodiscard]] bool DialogConditionPasses(const DialogCondition& cond, const cpptest::PlayerSave& save,
                                          const std::string& npc_id);

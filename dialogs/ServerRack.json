@@ -7,13 +7,16 @@
     },
     {
       "id": "ask",
-      "text": "Run diagnostics now?",
+      "text": "Run diagnostics now? (30 min)",
       "cond": { "flag": "rack_inspected", "equals": false },
       "choices": [
         {
-          "label": "Inspect rack",
+          "label": "Inspect rack (30m, +$20)",
           "next_step": "done",
-          "effects": [{ "set_flag": "rack_inspected", "value": true }]
+          "effects": [
+            { "set_flag": "rack_inspected", "value": true },
+            { "minutes": 30, "energy": -8, "stress": 6, "money": 20 }
+          ]
         },
         { "label": "Leave it", "next_step": "left" }
       ]
@@ -21,7 +24,7 @@
     {
       "id": "done",
       "entry": false,
-      "text": "Diagnostics complete. All systems nominal."
+      "text": "Diagnostics complete. Queue is still ugly — pull a ticket if you can stay."
     },
     {
       "id": "left",
@@ -30,8 +33,26 @@
     },
     {
       "id": "already",
-      "text": "${instance}: Last inspection is still on file. No new alerts.",
-      "cond": { "flag": "rack_inspected" }
+      "text": "${instance}: Last inspection is still on file. Take a ticket?",
+      "cond": { "flag": "rack_inspected" },
+      "choices": [
+        {
+          "label": "Work a ticket (2h, dice)",
+          "effects": [{ "incident": "web_bug" }]
+        },
+        {
+          "label": "Evening web course ($40, 2h)",
+          "next_step": "course_done",
+          "cond": { "flags_off": ["cert_web"], "money_min": 40 },
+          "effects": [{ "take_course": "web_fundamentals" }]
+        },
+        { "label": "Leave", "next_step": "left" }
+      ]
+    },
+    {
+      "id": "course_done",
+      "entry": false,
+      "text": "You grind the module. Die 2 now has a WEB face. Cert's on file."
     }
   ]
 }
